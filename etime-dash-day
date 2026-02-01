@@ -1,0 +1,72 @@
+#!/usr/bin/env python3
+"""Launch etime dashboard for a specific historical date.
+
+Usage:
+    etime-dash-day MM/DD/YYYY
+    etime-dash-day 01/15/2026
+
+Opens browser to dashboard filtered to that date on port 5174.
+"""
+
+import subprocess
+import sys
+import webbrowser
+from datetime import datetime
+from pathlib import Path
+
+DASHBOARD_PORT = 5174  # Different from main dashboard (5173)
+
+
+def main():
+    if len(sys.argv) != 2:
+        print("Usage: etime-dash-day MM/DD/YYYY")
+        print("Example: etime-dash-day 01/15/2026")
+        sys.exit(1)
+
+    date_str = sys.argv[1]
+
+    # Validate date format
+    try:
+        datetime.strptime(date_str, "%m/%d/%Y")
+    except ValueError:
+        print(f"Invalid date format: {date_str}")
+        print("Expected format: MM/DD/YYYY (e.g., 01/15/2026)")
+        sys.exit(1)
+
+    # Find the server script relative to this file
+    script_dir = Path(__file__).parent
+    server_path = script_dir / "dashboard" / "server.py"
+
+    if not server_path.exists():
+        print(f"Server not found at {server_path}")
+        sys.exit(1)
+
+    # Find venv python
+    venv_python = script_dir / ".venv" / "bin" / "python"
+    python_cmd = str(venv_python) if venv_python.exists() else sys.executable
+
+    print(f"Starting dashboard for {date_str} on port {DASHBOARD_PORT}...")
+
+    # Launch server
+    proc = subprocess.Popen(
+        [python_cmd, str(server_path), "--port", str(DASHBOARD_PORT), "--date", date_str],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+    url = f"http://localhost:{DASHBOARD_PORT}"
+    print(f"Opening {url}")
+    webbrowser.open(url)
+
+    print(f"Server PID: {proc.pid}")
+    print("Press Ctrl+C to stop...")
+
+    try:
+        proc.wait()
+    except KeyboardInterrupt:
+        proc.terminate()
+        print("\nStopped.")
+
+
+if __name__ == "__main__":
+    main()

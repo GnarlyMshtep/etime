@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>etime dashboard — {{ date_str }}</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+    <style>
+        :root {
+            --bg: #fafafa;
+            --card-bg: #ffffff;
+            --border: #e0e0e0;
+            --text: #333333;
+            --text-muted: #888888;
+            --accent: #FF9800;
+            --green: #2E7D32;
+            --red: #D32F2F;
+            --blue: #2196F3;
+            --orange-light: #FFE0B2;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            padding: 24px;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        h1 {
+            font-size: 24px;
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+        .date-subtitle {
+            color: var(--text-muted);
+            font-size: 14px;
+            margin-bottom: 24px;
+        }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 16px;
+            margin-bottom: 32px;
+        }
+        .stat-card {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 20px;
+            text-align: center;
+        }
+        .stat-card .value {
+            font-size: 32px;
+            font-weight: 700;
+            line-height: 1.2;
+        }
+        .stat-card .label {
+            font-size: 13px;
+            color: var(--text-muted);
+            margin-top: 4px;
+        }
+        .stat-card.green .value { color: var(--green); }
+        .stat-card.red .value { color: var(--red); }
+        .stat-card.blue .value { color: var(--blue); }
+        .stat-card.orange .value { color: var(--accent); }
+
+        .section { margin-bottom: 32px; }
+        .section h2 {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 12px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid var(--orange-light);
+        }
+
+        .chart-container {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 20px;
+            height: 300px;
+            position: relative;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        th, td {
+            padding: 10px 14px;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+            font-size: 14px;
+        }
+        th {
+            background: #f5f5f5;
+            font-weight: 600;
+            cursor: pointer;
+            user-select: none;
+            white-space: nowrap;
+        }
+        th:hover { background: #eeeeee; }
+        th .sort-arrow { font-size: 10px; margin-left: 4px; }
+        tr:last-child td { border-bottom: none; }
+        tr:hover td { background: #fafafa; }
+
+        .overtime { color: var(--red); font-weight: 600; }
+        .within-ambitious { color: var(--green); font-weight: 600; }
+        .badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+        .badge-green { background: #E8F5E9; color: var(--green); }
+        .badge-red { background: #FFEBEE; color: var(--red); }
+        .badge-gray { background: #F5F5F5; color: var(--text-muted); }
+
+        .insights {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 20px;
+        }
+        .insights li {
+            margin: 8px 0;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: var(--text-muted);
+            font-size: 16px;
+        }
+
+        .active-section table { opacity: 0.85; }
+        .active-label {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+            background: var(--orange-light);
+            color: var(--accent);
+        }
+
+        .refresh-note {
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 12px;
+            margin-top: 32px;
+        }
+    </style>
+</head>
+<body>
+    <h1>etime dashboard</h1>
+    <div class="date-subtitle" id="dateSubtitle"></div>
+
+    <div class="stats-grid" id="statsGrid"></div>
+
+    <div class="section">
+        <h2>Time Breakdown</h2>
+        <div class="chart-container">
+            <canvas id="chart"></canvas>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>Daily Timeline</h2>
+        <div class="chart-container" style="height: 200px;">
+            <canvas id="timelineChart"></canvas>
+        </div>
+    </div>
+
+    <div class="section" id="activeSection" style="display:none;">
+        <h2>Active Tasks <span class="active-label">live</span></h2>
+        <div class="active-section" id="activeTableContainer"></div>
+    </div>
+
+    <div class="section">
+        <h2>Completed Tasks</h2>
+        <div id="taskTableContainer"></div>
+    </div>
+
+    <div class="section">
+        <h2>Insights</h2>
+        <div class="insights" id="insights"></div>
+    </div>
+
+    <div class="refresh-note">Auto-refreshes every 60s</div>
+
+    <script>
+    let chartInstance = null;
+    let timelineChartInstance = null;
+    let currentSort = { key: 'completed_at', asc: false };
+
+    function fmt(seconds) {
+        const m = Math.floor(seconds / 60);
+        const s = Math.floor(seconds % 60);
+        return `${m}m ${s.toString().padStart(2, '0')}s`;
+    }
+
+    function fmtShort(seconds) {
+        const m = Math.floor(seconds / 60);
+        return `${m}m`;
+    }
+
+    function pct(ratio) {
+        return `${Math.round(ratio * 100)}%`;
+    }
+
+    function timeOfDay(iso) {
+        if (!iso) return '';
+        try {
+            const d = new Date(iso);
+            return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+        } catch { return ''; }
+    }
+
+    function renderStats(stats) {
+        const grid = document.getElementById('statsGrid');
+        const totalHrs = (stats.total_elapsed_seconds / 3600).toFixed(1);
+        const cards = [
+            { value: stats.total_tasks, label: 'Tasks completed', cls: 'blue' },
+            { value: `${totalHrs}h`, label: 'Total time', cls: '' },
+            { value: pct(stats.avg_accuracy), label: 'Avg accuracy (elapsed/est)', cls: stats.avg_accuracy <= 1.0 ? 'green' : 'red' },
+            { value: stats.distractions, label: 'Distractions today', cls: stats.distractions > 5 ? 'red' : 'orange' },
+        ];
+        if (stats.ambitious_tasks > 0) {
+            cards.push({
+                value: `${stats.ambitious_within}/${stats.ambitious_tasks}`,
+                label: 'Ambitious goals hit',
+                cls: stats.ambitious_rate >= 0.5 ? 'green' : 'red'
+            });
+        }
+        grid.innerHTML = cards.map(c => `
+            <div class="stat-card ${c.cls}">
+                <div class="value">${c.value}</div>
+                <div class="label">${c.label}</div>
+            </div>
+        `).join('');
+    }
+
+    function renderChart(tasks) {
+        const ctx = document.getElementById('chart').getContext('2d');
+        if (chartInstance) chartInstance.destroy();
+        if (tasks.length === 0) {
+            ctx.font = '16px -apple-system, sans-serif';
+            ctx.fillStyle = '#888';
+            ctx.textAlign = 'center';
+            ctx.fillText('No tasks to chart', ctx.canvas.width / 2, 140);
+            return;
+        }
+
+        const labels = tasks.map(t => t.name);
+        const elapsed = tasks.map(t => t.elapsed_seconds / 60);
+        const estimated = tasks.map(t => t.estimated_seconds / 60);
+        const ambitious = tasks.map(t => t.ambitious_seconds ? t.ambitious_seconds / 60 : null);
+
+        const datasets = [
+            {
+                label: 'Elapsed (min)',
+                data: elapsed,
+                backgroundColor: tasks.map(t => t.overtime ? '#FFCDD2' : t.within_ambitious ? '#C8E6C9' : '#BBDEFB'),
+                borderColor: tasks.map(t => t.overtime ? '#D32F2F' : t.within_ambitious ? '#2E7D32' : '#2196F3'),
+                borderWidth: 1,
+            },
+            {
+                label: 'Estimated (min)',
+                data: estimated,
+                backgroundColor: 'rgba(0,0,0,0)',
+                borderColor: '#999999',
+                borderWidth: 2,
+                borderDash: [5, 3],
+            },
+        ];
+
+        // Only add ambitious dataset if any task has it
+        if (ambitious.some(a => a !== null)) {
+            datasets.push({
+                label: 'Ambitious (min)',
+                data: ambitious,
+                backgroundColor: 'rgba(0,0,0,0)',
+                borderColor: '#2E7D32',
+                borderWidth: 2,
+                borderDash: [2, 2],
+            });
+        }
+
+        chartInstance = new Chart(ctx, {
+            type: 'bar',
+            data: { labels, datasets },
+            options: {
+                indexAxis: 'y',
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { position: 'bottom' },
+                    tooltip: {
+                        callbacks: {
+                            label: (c) => `${c.dataset.label}: ${c.raw !== null ? c.raw.toFixed(1) + 'm' : 'N/A'}`
+                        }
+                    }
+                },
+                scales: {
+                    x: { title: { display: true, text: 'Minutes' }, beginAtZero: true },
+                    y: { ticks: { font: { size: 13 } } }
+                }
+            }
+        });
+    }
+
+    function renderTimelineChart(tasks, distractions) {
+        const ctx = document.getElementById('timelineChart').getContext('2d');
+        if (timelineChartInstance) timelineChartInstance.destroy();
+
+        // Create hourly buckets (6am to midnight)
+        const hours = [];
+        for (let h = 6; h <= 23; h++) {
+            hours.push(h);
+        }
+        const labels = hours.map(h => `${h}:00`);
+
+        // Bucket work minutes by hour (using completed_at time)
+        const workMinutes = hours.map(h => {
+            let mins = 0;
+            for (const t of tasks) {
+                const completedAt = t.completed_at || t.created_at;
+                if (!completedAt) continue;
+                try {
+                    const d = new Date(completedAt);
+                    if (d.getHours() === h) {
+                        mins += t.elapsed_seconds / 60;
+                    }
+                } catch {}
+            }
+            return Math.round(mins * 10) / 10;
+        });
+
+        // Bucket distractions by hour
+        const distractionCounts = hours.map(h => {
+            let count = 0;
+            for (const ts of distractions.timestamps) {
+                // ts is "HH:MM:SS" format
+                const hour = parseInt(ts.split(':')[0], 10);
+                if (hour === h) count++;
+            }
+            return count;
+        });
+
+        timelineChartInstance = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels,
+                datasets: [
+                    {
+                        label: 'Work (min)',
+                        data: workMinutes,
+                        backgroundColor: '#BBDEFB',
+                        borderColor: '#2196F3',
+                        borderWidth: 1,
+                        yAxisID: 'y',
+                    },
+                    {
+                        label: 'Distractions',
+                        data: distractionCounts,
+                        type: 'line',
+                        borderColor: '#D32F2F',
+                        backgroundColor: 'rgba(211, 47, 47, 0.1)',
+                        fill: true,
+                        tension: 0.3,
+                        pointRadius: distractionCounts.map(c => c > 0 ? 5 : 0),
+                        pointBackgroundColor: '#D32F2F',
+                        yAxisID: 'y1',
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: { position: 'bottom' },
+                },
+                scales: {
+                    x: { title: { display: true, text: 'Hour' } },
+                    y: {
+                        type: 'linear',
+                        position: 'left',
+                        title: { display: true, text: 'Minutes' },
+                        beginAtZero: true,
+                    },
+                    y1: {
+                        type: 'linear',
+                        position: 'right',
+                        title: { display: true, text: 'Distractions' },
+                        beginAtZero: true,
+                        grid: { drawOnChartArea: false },
+                    }
+                }
+            }
+        });
+    }
+
+    function sortTasks(tasks, key, asc) {
+        return [...tasks].sort((a, b) => {
+            let va = a[key], vb = b[key];
+            if (typeof va === 'string') { va = va.toLowerCase(); vb = (vb || '').toLowerCase(); }
+            if (va < vb) return asc ? -1 : 1;
+            if (va > vb) return asc ? 1 : -1;
+            return 0;
+        });
+    }
+
+    function renderTable(tasks, containerId, sortable) {
+        const container = document.getElementById(containerId);
+        if (tasks.length === 0) {
+            container.innerHTML = '<div class="empty-state">No tasks yet</div>';
+            return;
+        }
+
+        const sorted = sortable ? sortTasks(tasks, currentSort.key, currentSort.asc) : tasks;
+        const arrow = (key) => {
+            if (!sortable || currentSort.key !== key) return '';
+            return `<span class="sort-arrow">${currentSort.asc ? '▲' : '▼'}</span>`;
+        };
+        const sortAttr = (key) => sortable ? `onclick="toggleSort('${key}')"` : '';
+
+        // Calculate total elapsed for fraction
+        const totalElapsed = sorted.reduce((sum, t) => sum + t.elapsed_seconds, 0);
+
+        const rows = sorted.map(t => {
+            const accClass = t.overtime ? 'overtime' : t.within_ambitious ? 'within-ambitious' : '';
+            const badge = t.within_ambitious
+                ? '<span class="badge badge-green">ambitious</span>'
+                : t.overtime
+                ? '<span class="badge badge-red">overtime</span>'
+                : '<span class="badge badge-gray">normal</span>';
+
+            const ambStr = t.ambitious_seconds
+                ? fmtShort(t.ambitious_seconds)
+                : '—';
+
+            const fracOfDay = totalElapsed > 0 ? (t.elapsed_seconds / totalElapsed) : 0;
+
+            return `<tr>
+                <td>${t.name}</td>
+                <td class="${accClass}">${fmt(t.elapsed_seconds)}</td>
+                <td>${pct(fracOfDay)}</td>
+                <td>${ambStr}</td>
+                <td>${fmt(t.estimated_seconds)}</td>
+                <td class="${accClass}">${pct(t.accuracy)}</td>
+                <td>${badge}</td>
+                <td>${timeOfDay(t.completed_at || t.created_at)}</td>
+            </tr>`;
+        }).join('');
+
+        container.innerHTML = `<table>
+            <thead><tr>
+                <th ${sortAttr('name')}>Task${arrow('name')}</th>
+                <th ${sortAttr('elapsed_seconds')}>Elapsed${arrow('elapsed_seconds')}</th>
+                <th>% of Day</th>
+                <th>Ambitious</th>
+                <th ${sortAttr('estimated_seconds')}>Estimated${arrow('estimated_seconds')}</th>
+                <th ${sortAttr('accuracy')}>Accuracy${arrow('accuracy')}</th>
+                <th>Status</th>
+                <th ${sortAttr('completed_at')}>Time${arrow('completed_at')}</th>
+            </tr></thead>
+            <tbody>${rows}</tbody>
+        </table>`;
+    }
+
+    function renderInsights(stats, tasks, distractions) {
+        const el = document.getElementById('insights');
+        const items = [];
+
+        if (stats.total_tasks === 0) {
+            el.innerHTML = '<div class="empty-state">Complete some tasks to see insights</div>';
+            return;
+        }
+
+        // Calibration insight
+        if (stats.avg_accuracy < 0.8) {
+            items.push('You\'re finishing tasks much faster than estimated — consider tighter estimates.');
+        } else if (stats.avg_accuracy > 1.2) {
+            items.push('Tasks are consistently taking longer than estimated — consider adding buffer time.');
+        } else {
+            items.push('Your estimates are well-calibrated today — within 20% on average.');
+        }
+
+        // Overtime count
+        const overtimeTasks = tasks.filter(t => t.overtime);
+        if (overtimeTasks.length > 0) {
+            items.push(`${overtimeTasks.length} of ${tasks.length} tasks went overtime.`);
+        }
+
+        // Ambitious insight
+        if (stats.ambitious_tasks > 0) {
+            if (stats.ambitious_rate >= 0.5) {
+                items.push(`Hit ${stats.ambitious_within}/${stats.ambitious_tasks} ambitious targets — strong focus!`);
+            } else {
+                items.push(`Hit ${stats.ambitious_within}/${stats.ambitious_tasks} ambitious targets — ambitious goals may need adjustment.`);
+            }
+        }
+
+        // Distraction insight
+        if (distractions.count > 0) {
+            items.push(`${distractions.count} distraction${distractions.count > 1 ? 's' : ''} logged today (${distractions.timestamps.join(', ')}).`);
+        }
+
+        // Most overtime task
+        if (overtimeTasks.length > 0) {
+            const worst = overtimeTasks.reduce((a, b) => a.accuracy > b.accuracy ? a : b);
+            items.push(`Biggest overrun: "${worst.name}" at ${pct(worst.accuracy)} of estimate.`);
+        }
+
+        el.innerHTML = '<ul>' + items.map(i => `<li>${i}</li>`).join('') + '</ul>';
+    }
+
+    let _allTasks = [];
+    function toggleSort(key) {
+        if (currentSort.key === key) {
+            currentSort.asc = !currentSort.asc;
+        } else {
+            currentSort.key = key;
+            currentSort.asc = true;
+        }
+        renderTable(_allTasks, 'taskTableContainer', true);
+    }
+
+    async function fetchAndRender() {
+        try {
+            const res = await fetch('/api/data');
+            const data = await res.json();
+
+            document.getElementById('dateSubtitle').textContent = data.date;
+
+            renderStats(data.stats);
+            renderChart(data.tasks);
+            renderTimelineChart(data.tasks, data.distractions);
+
+            _allTasks = data.tasks;
+            renderTable(data.tasks, 'taskTableContainer', true);
+
+            // Active tasks
+            if (data.active_tasks.length > 0) {
+                document.getElementById('activeSection').style.display = '';
+                renderTable(data.active_tasks, 'activeTableContainer', false);
+            } else {
+                document.getElementById('activeSection').style.display = 'none';
+            }
+
+            renderInsights(data.stats, data.tasks, data.distractions);
+        } catch (err) {
+            console.error('Failed to fetch dashboard data:', err);
+        }
+    }
+
+    // Initial load
+    fetchAndRender();
+
+    // Auto-refresh every 60s
+    setInterval(fetchAndRender, 60000);
+    </script>
+</body>
+</html>
