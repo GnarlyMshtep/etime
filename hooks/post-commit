@@ -1,0 +1,16 @@
+#!/bin/bash
+# Auto-backup ~/.etime data after committing to etime repo
+
+DATA_DIR="$HOME/.etime"
+
+if [ ! -d "$DATA_DIR/.git" ]; then
+    exit 0  # Silently skip if data repo not set up
+fi
+
+cd "$DATA_DIR"
+git add -A
+
+if ! git diff --staged --quiet; then
+    git commit -m "Auto-backup $(date +%Y-%m-%d\ %H:%M)" >/dev/null 2>&1
+    git push >/dev/null 2>&1 &  # Push in background
+fi

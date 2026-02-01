@@ -1,0 +1,30 @@
+#!/bin/bash
+# Push etime repo and auto-backup ~/.etime data
+
+set -e
+
+# Push the main repo
+echo "Pushing etime..."
+git push "$@"
+
+# Backup data repo
+DATA_DIR="$HOME/.etime"
+
+if [ ! -d "$DATA_DIR/.git" ]; then
+    echo "Warning: ~/.etime is not a git repo, skipping backup"
+    exit 0
+fi
+
+echo ""
+echo "Backing up etime data..."
+cd "$DATA_DIR"
+
+git add -A
+
+if ! git diff --staged --quiet; then
+    git commit -m "Auto-backup $(date +%Y-%m-%d\ %H:%M)"
+    git push
+    echo "etime data backed up successfully"
+else
+    echo "No data changes to backup"
+fi
