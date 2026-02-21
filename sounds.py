@@ -89,7 +89,7 @@ def play_success_sound() -> None:
         except Exception as e:
             print(f"Warning: Failed to play custom success sound: {e}")
 
-    # Fall back to system sound - use Purr (same as ambitious)
+    # Fall back to system sound - use Purr for regular completion
     for sound_name in ("Purr", "Hero"):
         try:
             sound = NSSound.soundNamed_(sound_name)
@@ -124,8 +124,8 @@ def play_ambitious_success_sound() -> None:
         except Exception as e:
             print(f"Warning: Failed to play custom ambitious sound: {e}")
 
-    # Fall back to system sound - try Purr (more celebratory), then Hero
-    for sound_name in ("Purr", "Hero"):
+    # Fall back to system sound - use Glass (more celebratory) for ambitious
+    for sound_name in ("Glass", "Purr", "Hero"):
         try:
             sound = NSSound.soundNamed_(sound_name)
             if sound:

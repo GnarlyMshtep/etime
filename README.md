@@ -12,12 +12,18 @@ A macOS floating overlay timer app for productivity tracking. Track time spent o
 - **Looping alarms** - Continuous alerts until dismissed at 1x, 2x, 3x overtime
 - **Bold alarm indicators** - Tasks with active alarms appear bolded
 - **Auto-quiet on completion** - Completing a task automatically dismisses its alarm
-- **Satisfying completion** - Green flash animation, confetti for ambitious completions
+- **Pause silences alarms** - Pausing a task stops its alarm; resuming re-triggers it if still overtime
+- **Satisfying completion** - Confetti for all completions; green flash + extra confetti for ambitious
 - **Focus restoration** - Returns focus to your previous app after creating tasks
 - **Minimize/show overlay** - Hide the window when you need focus
 - **Persistent storage** - Tasks saved to ~/.etime/
 - **Task history** - Completed tasks logged to history.jsonl
 - **Custom sounds** - Use your own .aiff files for alarms, success, and ambitious completions
+- **Subtasks** - Create subtasks nested under parent tasks (cosmetic grouping with independent timers)
+- **Work intervals** - Precise time tracking records when work actually happens (pause/resume timestamps)
+- **Sleep detection** - Auto-pauses all tasks when Mac sleeps, resumes on wake
+- **Help menu** - Toggle hotkey reference with ⌃⌥⌘H
+- **Web dashboard** - Daily review with date picker, interval-based timeline, and sortable task table
 
 ## Installation
 
@@ -59,7 +65,41 @@ All hotkeys use: **Control (⌃) + Option (⌥) + Command (⌘)**
 | ⌃⌥⌘↑ | Move focus **up** |
 | ⌃⌥⌘↓ | Move focus **down** |
 | ⌃⌥⌘Q | **Quiet** - Dismiss all active alarms |
+| ⌃⌥⌘U | **Undo** - Restore last completed task (single-level) |
 | ⌃⌥⌘S | **Shrink** - Hide/show the overlay window |
+| ⌃⌥⌘H | **Help** - Toggle hotkey reference popup |
+| ⌃⌥⌘T | **Toggle subtask** - Make focused task a subtask of the task above it |
+
+### Subtasks
+
+Subtasks provide a cosmetic parent-child grouping. Each subtask has its own independent timer.
+
+**Creating a subtask via dialog:**
+1. Focus the intended parent task (⌃⌥⌘↑/↓)
+2. Press ⌃⌥⌘N to open the new task dialog
+3. The "Parent:" field shows the focused task's name
+4. Leave it filled to create a subtask, or clear it for a top-level task
+5. Subtask appears indented right below its parent
+
+**Toggling subtask status on existing tasks:**
+- Focus a task and press ⌃⌥⌘T to make it a subtask of the task above
+- Press ⌃⌥⌘T again to un-subtask it
+
+**Behavior:**
+- Subtasks show indented in the overlay when their parent is active
+- Completing a parent does not affect subtasks — they remain active but lose their indent
+- Double-nesting (subtask of a subtask) works at the data level but only shows single indent in the overlay
+
+### Work Intervals
+
+etime tracks precise work intervals — every start/resume and pause/complete records a timestamp pair. This means:
+
+- **Elapsed time is computed from actual work intervals**, not from a running counter
+- **Dashboard timeline** shows when work actually happened, not just when tasks were completed
+- **Pause/resume** creates clean interval boundaries
+- **Sleep/wake** automatically closes and opens intervals
+
+Old tasks without interval data display correctly using their stored `elapsed_seconds`.
 
 ### Task States & Colors
 
@@ -85,6 +125,7 @@ When a task exceeds its estimated time, etime triggers escalating alarms:
 - **Visual indicator**: Tasks with active alarms appear **bolded**
 - **Multiple alarms**: If multiple tasks trigger alarms, they all appear bold
 - **Dismissing**: Press ⌃⌥⌘Q to quiet all active alarms at once
+- **Pausing**: Pausing a task silences its alarm; resuming re-triggers it if still overtime
 
 **Example**: A 15-minute task will trigger alarms at:
 - 15 minutes (1x) - alarm starts looping, task becomes bold
@@ -98,7 +139,7 @@ Ambitious time is an optional **stretch goal** for each task. It represents a sl
 
 ### How It Works
 
-- When creating a task (⌃⌥⌘N), set the "Ambitious" field (leave at `--` to skip)
+- When creating a task (⌃⌥⌘N), set the "Ambitious" field (leave empty to skip)
 - Ambitious time must be ≤ estimated time
 - Time display shows 3 values: `actual / ambitious / estimated`
 - If no ambitious time is set: `actual / --:-- / estimated`
@@ -111,14 +152,29 @@ Ambitious time is an optional **stretch goal** for each task. It represents a sl
 
 ### Completion Celebration
 
-- **Within ambitious time**: Sound + green flash + confetti particles + fade out
-- **Normal completion**: Sound + fade out
-- Both use the same completion sound ("Purr" by default, customizable)
+- **Within ambitious time**: "Glass" sound + green flash + lots of confetti + fade out
+- **Normal completion**: "Purr" sound + mini confetti + fade out
 - Both auto-dismiss active alarms
 
-### Customizing Animations
+### Customizing Sounds
 
-Completion animations are controlled by `_remove_task_animated()` in `overlay.py` with two flags: `green_flash` and `confetti`. To change which animations play for normal vs ambitious completions, edit the `remove_task_with_celebration()` and `remove_task_with_confetti()` methods in `overlay.py`.
+**Alarm sound** (loops when overtime):
+```bash
+ffmpeg -i input.mp3 ~/.etime/alarm.aiff
+```
+Falls back to system "Ping" if no custom file.
+
+**Success sound** (normal completion):
+```bash
+ffmpeg -i input.mp3 ~/.etime/success.aiff
+```
+Falls back to system "Purr" → "Hero".
+
+**Ambitious sound** (completed within ambitious time):
+```bash
+ffmpeg -i fanfare.mp3 ~/.etime/ambitious.aiff
+```
+Falls back to system "Glass" → "Purr" → "Hero".
 
 ## Task Lifecycle Diagram
 
@@ -128,42 +184,55 @@ Completion animations are controlled by `_remove_task_animated()` in `overlay.py
 ┌─────────┐
 │ BACKLOG │ (Rare - tasks auto-start by default)
 └────┬────┘
-     │ start
+     │ start (opens work interval)
      ↓
-┌─────────────────┐ ◄──── resume ──────┐
-│ ONGOING         │                     │
-│                 │                     │
-│ [ambitious]     │                     │
-│  elapsed < amb  │                     │
-│  GREEN text     │                     │
-│        │        │                     │
-│        ↓        │                     │
-│ [normal]        │                     │
-│  amb ≤ elapsed  │                     │
-│  < estimated    │                     │
-│  BLACK text     │                     │
-│        │        │                     │
-│        ↓        │                     │
-│ [overtime]      │                     │
-│  elapsed ≥ est  │                     │
-│  RED text       │                     │
-└────┬────────────┘                     │
-     │                                  │
-     ├──→ pause ──────► ┌───────────────┤
-     │                  │    PAUSED     │
-     │                  │  GRAY text    │
-     │                  └───────────────┘
+┌─────────────────┐ ◄── resume (opens interval) ──┐
+│ ONGOING         │                                │
+│                 │                                │
+│ [ambitious]     │                                │
+│  elapsed < amb  │                                │
+│  GREEN text     │                                │
+│        │        │                                │
+│        ↓        │                                │
+│ [normal]        │                                │
+│  amb ≤ elapsed  │                                │
+│  < estimated    │                                │
+│  BLACK text     │                                │
+│        │        │                                │
+│        ↓        │                                │
+│ [overtime]      │                                │
+│  elapsed ≥ est  │                                │
+│  RED text       │                                │
+└────┬────────────┘                                │
+     │                                             │
+     ├──→ pause (closes interval) ► ┌──────────────┤
+     │    alarm silenced if active  │    PAUSED    │
+     │                              │  GRAY text   │
+     │                              └──────────────┘
      │
-     └──→ complete ──► ┌────────────────┐
-                       │   COMPLETED    │
-                       │                │
-                       │ if ambitious:  │
-                       │  green flash + │
-                       │  confetti +    │
-                       │  fade out      │
-                       │ else:          │
-                       │  fade out      │
-                       └────────────────┘
+     └──→ complete (closes interval) ► ┌───────────────┐
+                                       │   COMPLETED   │
+                                       │               │
+                                       │ if ambitious:  │
+                                       │  Glass sound + │
+                                       │  green flash + │
+                                       │  confetti      │
+                                       │ else:          │
+                                       │  Purr sound +  │
+                                       │  mini confetti │
+                                       └───────┬───────┘
+                                               │
+                                               │ undo (⌃⌥⌘U)
+                                               │ (opens new interval)
+                                               ↓
+                                       ┌───────────────┐
+                                       │  → ONGOING    │
+                                       │  removed from │
+                                       │  history      │
+                                       └───────────────┘
+
+Sleep → auto-pauses all ONGOING tasks (closes intervals)
+Wake  → auto-resumes those tasks (opens new intervals)
 ```
 
 ### Visual States & Colors
@@ -176,6 +245,7 @@ Completion animations are controlled by `_remove_task_animated()` in `overlay.py
 | **Paused** | Gray text (#999), shows elapsed time | ⌃⌥⌘P on ongoing task |
 | **Overtime** | **Red text** (#D32F2F) | elapsed ≥ estimated |
 | **Alarmed** | **Bold text** | Alarm triggers at 1x, 2x, 3x... |
+| **Subtask** | Indented left margin | parent_task_id set, parent active |
 
 ### Alarm Lifecycle
 
@@ -190,78 +260,15 @@ Task running → Elapsed ≥ Estimated
          │                      │
          └──────────┬───────────┘
                     ↓
-         ┌──────────┴───────────┐
-         │                      │
-   ⌃⌥⌘Q pressed          Task completed (⌃⌥⌘C)
-         │                      │
-         └──────────┬───────────┘
+         ┌──────────┼───────────────┐
+         │          │               │
+   ⌃⌥⌘Q pressed  Task completed  Task paused
+         │          │               │
+         └──────────┴───────────────┘
                     ↓
               Alarm dismissed
          (sound stops, bold removed)
-```
-
-**Key Points**:
-- Tasks start in ONGOING state (auto-start on creation)
-- If ambitious time is set, task shows green while within ambitious target
-- Alarms trigger when elapsed ≥ estimated (1x, 2x, 3x multiples)
-- Alarms loop continuously until dismissed or task completed
-- Completing a task with active alarm auto-dismisses the alarm
-- Completing within ambitious time triggers confetti + triumphant sound
-- Normal completion triggers green flash + "Hero" sound
-- Focus automatically returns to your previous app after creating a task
-
-### Customizing the Alarm Sound
-
-You can use your own alarm sound instead of the system "Ping":
-
-1. **Prepare your sound file**:
-   - Must be in `.aiff` format
-   - Use an online converter (e.g., online-convert.com) or ffmpeg:
-     ```bash
-     ffmpeg -i input.mp3 ~/.etime/alarm.aiff
-     ```
-
-2. **Save to the correct location**:
-   ```bash
-   # Place your custom sound here:
-   ~/.etime/alarm.aiff
-   ```
-
-3. **Restart etime** to use the new sound
-
-**Finding alarm sounds**:
-- Free sounds: [freesound.org](https://freesound.org)
-- Convert any audio: [online-convert.com](https://www.online-convert.com)
-- Use system sounds: Look in `/System/Library/Sounds/`
-
-### Customizing the Success Sound
-
-When you complete a task, etime plays a celebratory success sound (system "Hero" by default). You can customize this:
-
-1. **Prepare your sound file**:
-   - Must be in `.aiff` format (same as alarm sound)
-   - Use an online converter or ffmpeg:
-     ```bash
-     ffmpeg -i input.mp3 ~/.etime/success.aiff
-     ```
-
-2. **Save to the correct location**:
-   ```bash
-   # Place your custom success sound here:
-   ~/.etime/success.aiff
-   ```
-
-3. **Restart etime** to use the new sound
-
-**Tip**: The default system "Hero" sound is brief. For a more prolonged celebration, use a custom sound file (1-3 seconds works well)!
-
-### Customizing the Ambitious Sound
-
-When completing a task within its ambitious time, a more triumphant sound plays (system "Purr" by default):
-
-```bash
-# Custom ambitious completion sound:
-ffmpeg -i fanfare.mp3 ~/.etime/ambitious.aiff
+         Pause: alarm re-fires on resume
 ```
 
 ## Dashboard
@@ -271,14 +278,16 @@ etime includes a web dashboard for daily review, auto-launched when etime starts
 ### Access
 
 - **URL**: http://localhost:5173
+- **Date picker**: Click the date in the header to view any day
+- **URL param**: http://localhost:5173/?date=2026-01-15
 - **Auto-refresh**: Every 60 seconds
 
 ### Features
 
 - **Summary stats**: Tasks completed, total time, accuracy, distractions, ambitious goals hit
 - **Time breakdown chart**: Horizontal bar chart showing elapsed vs estimated vs ambitious per task
-- **Daily timeline**: Work minutes per hour (bars) with distractions overlay (line)
-- **Task table**: Sortable columns, shows elapsed, % of day, ambitious, estimated, accuracy, status
+- **Daily timeline**: Work minutes per hour based on actual work intervals (falls back to completion-hour for old tasks)
+- **Task table**: Sortable columns, shows elapsed, % of day, ambitious, estimated, accuracy, status. Subtasks shown with ↳ prefix
 - **Insights**: Calibration feedback, ambitious goal tracking, distraction timestamps
 - **Active tasks**: Shows currently running tasks (live section)
 
@@ -313,22 +322,24 @@ The app will be at `dist/etime.app` - you can drag it to Applications.
 - Use ⌃⌥⌘↑/↓ to navigate between tasks
 - Use ⌃⌥⌘P to toggle between running and paused
 - Use ⌃⌥⌘S to hide the overlay when you need screen space
+- Use ⌃⌥⌘H to see all hotkeys at a glance
 - Pause tasks when taking breaks (timer stops, can resume later)
 - Complete tasks when done (saves to history, removes from overlay)
-- When alarms trigger, they loop until you press ⌃⌥⌘Q
+- When alarms trigger, they loop until you press ⌃⌥⌘Q or pause the task
 - Tasks are saved automatically on every change
+- Closing your Mac lid auto-pauses all tasks; opening resumes them
 
 ## Architecture
 
 ```
-main.py           # Entry point, AppController
-models.py         # Task dataclass, TaskState enum
+main.py           # Entry point, AppController, SleepObserver, HelpDialog
+models.py         # Task dataclass, TaskState enum, work intervals
 storage.py        # File I/O (active.json, history.jsonl)
 config.py         # Constants and paths
 timer_engine.py   # QTimer with alarm logic
 sounds.py         # Alarm playback (NSSound)
 overlay.py        # Main overlay window
-task_dialog.py    # New task popup
+task_dialog.py    # New task popup (with subtask parent field)
 hotkeys.py        # Quartz event tap for global hotkeys
 dashboard/        # Flask web dashboard
   __init__.py     # Launcher (auto-start, PID management)

@@ -67,7 +67,7 @@ class TimerEngine(QObject):
         # Update elapsed time for all ONGOING tasks
         for task in self.tasks:
             if task.state == TaskState.ONGOING:
-                task.elapsed_seconds += TIMER_INCREMENT_S
+                task.elapsed_seconds = task.compute_elapsed()
 
                 # Check if alarm should trigger
                 alarm_level = check_alarm(task)

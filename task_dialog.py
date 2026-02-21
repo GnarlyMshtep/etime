@@ -16,9 +16,10 @@ from config import (
 class TaskDialog(QDialog):
     """Dialog for creating a new task."""
 
-    # Signal emitted when task is submitted (name, minutes, ambitious_minutes)
+    # Signal emitted when task is submitted (name, minutes, ambitious_minutes, parent_task_id)
     # ambitious_minutes = 0 means None (no ambitious target)
-    task_submitted = pyqtSignal(str, int, int)
+    # parent_task_id = "" means no parent (top-level task)
+    task_submitted = pyqtSignal(str, int, int, str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -105,6 +106,20 @@ class TaskDialog(QDialog):
         ambitious_layout.addWidget(self.ambitious_input)
         layout.addLayout(ambitious_layout)
 
+        # Subtask parent field (hidden when no parent context)
+        self.parent_layout = QHBoxLayout()
+        self.parent_label = QLabel("Parent:")
+        self.parent_label.setFixedWidth(80)
+        self.parent_input = QLineEdit()
+        self.parent_input.setPlaceholderText("none")
+        self.parent_layout.addWidget(self.parent_label)
+        self.parent_layout.addWidget(self.parent_input)
+        self.parent_container = QWidget()
+        self.parent_container.setLayout(self.parent_layout)
+        self.parent_container.setVisible(False)
+        self._parent_task_id = ""
+        layout.addWidget(self.parent_container)
+
         # Error label (hidden by default)
         self.error_label = QLabel("")
         self.error_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -189,14 +204,27 @@ class TaskDialog(QDialog):
             return
 
         self.error_label.setVisible(False)
-        print(f"TaskDialog submitting: name='{name}', minutes={minutes}, ambitious={ambitious_minutes}")
 
-        # Emit signal (ambitious_minutes=0 means None)
-        self.task_submitted.emit(name, minutes, ambitious_minutes)
+        # Determine parent task ID (non-empty parent field = subtask)
+        parent_id = self._parent_task_id if self.parent_input.text().strip() else ""
+        print(f"TaskDialog submitting: name='{name}', minutes={minutes}, ambitious={ambitious_minutes}, parent={parent_id or 'none'}")
+
+        # Emit signal (ambitious_minutes=0 means None, parent_id="" means top-level)
+        self.task_submitted.emit(name, minutes, ambitious_minutes, parent_id)
 
         # Close dialog
         self.accept()
         print("TaskDialog closed")
+
+    def set_parent_context(self, parent_name: str, parent_task_id: str) -> None:
+        """Set the parent task context for the subtask field."""
+        self._parent_task_id = parent_task_id
+        if parent_name and parent_task_id:
+            self.parent_input.setText(parent_name)
+            self.parent_container.setVisible(True)
+        else:
+            self.parent_container.setVisible(False)
+            self._parent_task_id = ""
 
     def reset(self):
         """Reset dialog to default state."""
@@ -204,3 +232,6 @@ class TaskDialog(QDialog):
         self.time_input.setValue(DEFAULT_TASK_MINUTES)
         self.ambitious_input.clear()
         self.error_label.setVisible(False)
+        self.parent_input.clear()
+        self.parent_container.setVisible(False)
+        self._parent_task_id = ""

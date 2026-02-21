@@ -158,11 +158,24 @@
             font-size: 12px;
             margin-top: 32px;
         }
+        .date-subtitle input[type="date"] {
+            border: none;
+            background: transparent;
+            color: var(--text-muted);
+            font-size: 14px;
+            font-family: inherit;
+            cursor: pointer;
+            padding: 0;
+        }
+        .date-subtitle input[type="date"]:hover { color: var(--accent); }
+        .date-subtitle input[type="date"]:focus { outline: none; color: var(--text); }
     </style>
 </head>
 <body>
     <h1>etime dashboard</h1>
-    <div class="date-subtitle" id="dateSubtitle"></div>
+    <div class="date-subtitle">
+        <input type="date" id="datePicker" value="{{ date_str }}">
+    </div>
 
     <div class="stats-grid" id="statsGrid"></div>
 
@@ -201,6 +214,10 @@
     let chartInstance = null;
     let timelineChartInstance = null;
     let currentSort = { key: 'completed_at', asc: false };
+
+    // Date picker (value initialized from server template)
+    const datePicker = document.getElementById('datePicker');
+    datePicker.addEventListener('change', () => fetchAndRender(datePicker.value));
 
     function fmt(seconds) {
         const m = Math.floor(seconds / 60);
@@ -329,18 +346,42 @@
         }
         const labels = hours.map(h => `${h}:00`);
 
-        // Bucket work minutes by hour (using completed_at time)
+        // Bucket work minutes by hour using work_intervals when available,
+        // falling back to completed_at for old tasks without intervals.
         const workMinutes = hours.map(h => {
             let mins = 0;
             for (const t of tasks) {
-                const completedAt = t.completed_at || t.created_at;
-                if (!completedAt) continue;
-                try {
-                    const d = new Date(completedAt);
-                    if (d.getHours() === h) {
-                        mins += t.elapsed_seconds / 60;
+                if (t.work_intervals && t.work_intervals.length > 0) {
+                    // Distribute work time across actual working hours
+                    for (const iv of t.work_intervals) {
+                        if (!iv.start) continue;
+                        const start = new Date(iv.start);
+                        const end = iv.end ? new Date(iv.end) : new Date();
+                        // For each minute of the interval, bucket it
+                        const durationMs = end - start;
+                        if (durationMs <= 0) continue;
+                        // Compute overlap with hour h
+                        const hourStart = new Date(start);
+                        hourStart.setHours(h, 0, 0, 0);
+                        const hourEnd = new Date(start);
+                        hourEnd.setHours(h + 1, 0, 0, 0);
+                        const overlapStart = Math.max(start.getTime(), hourStart.getTime());
+                        const overlapEnd = Math.min(end.getTime(), hourEnd.getTime());
+                        if (overlapEnd > overlapStart) {
+                            mins += (overlapEnd - overlapStart) / 60000;
+                        }
                     }
-                } catch {}
+                } else {
+                    // Legacy: attribute all time to the completion hour
+                    const completedAt = t.completed_at || t.created_at;
+                    if (!completedAt) continue;
+                    try {
+                        const d = new Date(completedAt);
+                        if (d.getHours() === h) {
+                            mins += t.elapsed_seconds / 60;
+                        }
+                    } catch {}
+                }
             }
             return Math.round(mins * 10) / 10;
         });
@@ -437,6 +478,10 @@
         // Calculate total elapsed for fraction
         const totalElapsed = sorted.reduce((sum, t) => sum + t.elapsed_seconds, 0);
 
+        // Build parent name lookup from all tasks (not just sorted subset)
+        const parentNames = {};
+        for (const t of _allTasks) { parentNames[t.id] = t.name; }
+
         const rows = sorted.map(t => {
             const accClass = t.overtime ? 'overtime' : t.within_ambitious ? 'within-ambitious' : '';
             const badge = t.within_ambitious
@@ -451,8 +496,12 @@
 
             const fracOfDay = totalElapsed > 0 ? (t.elapsed_seconds / totalElapsed) : 0;
 
+            const nameDisplay = t.parent_task_id && parentNames[t.parent_task_id]
+                ? `<span style="color:var(--text-muted);margin-right:4px">↳</span>${t.name}`
+                : t.name;
+
             return `<tr>
-                <td>${t.name}</td>
+                <td>${nameDisplay}</td>
                 <td class="${accClass}">${fmt(t.elapsed_seconds)}</td>
                 <td>${pct(fracOfDay)}</td>
                 <td>${ambStr}</td>
@@ -536,12 +585,14 @@
         renderTable(_allTasks, 'taskTableContainer', true);
     }
 
-    async function fetchAndRender() {
+    async function fetchAndRender(selectedDate = null) {
         try {
-            const res = await fetch('/api/data');
+            const url = selectedDate ? `/api/data?date=${selectedDate}` : '/api/data';
+            const res = await fetch(url);
             const data = await res.json();
 
-            document.getElementById('dateSubtitle').textContent = data.date;
+            document.title = `etime dashboard — ${data.date}`;
+            if (datePicker.value !== data.date) datePicker.value = data.date;
 
             renderStats(data.stats);
             renderChart(data.tasks);
@@ -565,10 +616,10 @@
     }
 
     // Initial load
-    fetchAndRender();
+    fetchAndRender(datePicker.value);
 
-    // Auto-refresh every 60s
-    setInterval(fetchAndRender, 60000);
+    // Auto-refresh every 60s (use current picker value)
+    setInterval(() => fetchAndRender(datePicker.value), 60000);
     </script>
 </body>
 </html>

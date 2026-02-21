@@ -102,3 +102,57 @@ def append_to_history(task: Task) -> None:
 
     except Exception as e:
         print(f"Error: Failed to append to {HISTORY_FILE}: {e}")
+
+
+def remove_last_from_history(expected_task_id: str) -> bool:
+    """
+    Remove the last entry from history.jsonl if it matches expected task ID.
+
+    Args:
+        expected_task_id: The task ID we expect to find in the last line.
+
+    Returns:
+        True if successfully removed, False otherwise.
+    """
+    if not HISTORY_FILE.exists():
+        print("Warning: history file does not exist")
+        return False
+
+    try:
+        with open(HISTORY_FILE, 'r') as f:
+            lines = f.readlines()
+
+        if not lines:
+            print("Warning: history file is empty")
+            return False
+
+        # Parse last line and validate
+        last_line = lines[-1].strip()
+        if not last_line:
+            # Empty last line, try second to last
+            if len(lines) >= 2:
+                last_line = lines[-2].strip()
+                lines = lines[:-1]  # Remove empty line
+            else:
+                print("Warning: no valid entries in history")
+                return False
+
+        try:
+            last_task = json.loads(last_line)
+            if last_task.get('id') != expected_task_id:
+                print(f"Warning: last history entry ({last_task.get('id')}) doesn't match expected ({expected_task_id})")
+                return False
+        except json.JSONDecodeError:
+            print("Warning: last history line is not valid JSON")
+            return False
+
+        # Rewrite file without last line
+        with open(HISTORY_FILE, 'w') as f:
+            f.writelines(lines[:-1])
+
+        print(f"Removed task {expected_task_id} from history")
+        return True
+
+    except Exception as e:
+        print(f"Error: Failed to remove from history: {e}")
+        return False

@@ -26,6 +26,7 @@ class TaskWidget(QWidget):
         self.task = task
         self.is_focused = is_focused
         self.is_alarmed = False  # Track if task has active alarm
+        self.is_subtask = False  # Track indentation
 
         # Create layout
         layout = QHBoxLayout()
@@ -139,6 +140,15 @@ class TaskWidget(QWidget):
         self.is_alarmed = alarmed
         self.update_display()
 
+    def set_indent(self, indent: bool):
+        """Set subtask indentation and refresh display."""
+        if self.is_subtask != indent:
+            self.is_subtask = indent
+            layout = self.layout()
+            left = 28 if indent else 8  # Extra indent for subtasks
+            layout.setContentsMargins(left, 4, 8, 4)
+            self.update_display()
+
     @staticmethod
     def _format_time(seconds: float) -> str:
         """Format seconds as MM:SS."""
@@ -227,8 +237,22 @@ class OverlayWindow(QWidget):
         # Adjust window size
         self.adjustSize()
 
+    def insert_task(self, task: Task, index: int):
+        """Insert a task at a specific position with fade-in animation.
+
+        Used for undo functionality to restore task at original position.
+        """
+        is_focused = index == self.focused_index
+
+        widget = TaskWidget(task, is_focused)
+        self.task_widgets[task.id] = widget
+        self.layout.insertWidget(index, widget)
+
+        self._fade_in_widget(widget)
+        self.adjustSize()
+
     def _remove_task_animated(self, task_id: str, green_flash: bool = False,
-                              confetti: bool = False, callback=None):
+                              confetti: bool = False, confetti_count: int = 12, callback=None):
         """Remove a task with optional green flash and confetti animations.
 
         Args:
@@ -268,10 +292,15 @@ class OverlayWindow(QWidget):
                 }
             """)
             if confetti:
-                self._spawn_confetti(widget)
+                self._spawn_confetti(widget, count=confetti_count)
             from PyQt6.QtCore import QTimer
             delay = 600 if confetti else 400
             QTimer.singleShot(delay, finish_removal)
+        elif confetti:
+            # Mini confetti without green flash (normal completion)
+            self._spawn_confetti(widget, count=confetti_count)
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(100, finish_removal)
         else:
             finish_removal()
 
@@ -280,15 +309,15 @@ class OverlayWindow(QWidget):
         self._remove_task_animated(task_id, callback=callback)
 
     def remove_task_with_celebration(self, task_id: str, callback=None):
-        """Remove a completed task with fade-out (normal completion)."""
-        self._remove_task_animated(task_id, callback=callback)
+        """Remove a completed task with mini confetti (normal completion)."""
+        self._remove_task_animated(task_id, confetti=True, confetti_count=4, callback=callback)
 
     def remove_task_with_confetti(self, task_id: str, callback=None):
         """Remove a task with green flash + confetti (ambitious completion)."""
         self._remove_task_animated(task_id, green_flash=True, confetti=True,
                                    callback=callback)
 
-    def _spawn_confetti(self, source_widget):
+    def _spawn_confetti(self, source_widget, count: int = 12):
         """Spawn confetti particle labels that scatter from the widget."""
         import random
         from PyQt6.QtCore import QTimer
@@ -300,7 +329,7 @@ class OverlayWindow(QWidget):
         center_y = source_widget.y() + source_widget.height() // 2
 
         particles = []
-        for _ in range(12):
+        for _ in range(count):
             color = random.choice(confetti_colors)
             char = random.choice(confetti_chars)
 
@@ -344,6 +373,7 @@ class OverlayWindow(QWidget):
 
     def update_display(self):
         """Update all task widgets."""
+        active_task_ids = {t.id for t in self.tasks}
         for i, task in enumerate(self.tasks):
             if task.id in self.task_widgets:
                 widget = self.task_widgets[task.id]
@@ -353,6 +383,11 @@ class OverlayWindow(QWidget):
                 if self.app_controller:
                     is_alarmed = self.app_controller.is_task_alarmed(task.id)
                     widget.set_alarmed(is_alarmed)
+                # Indent if this is an active subtask (parent still in active list)
+                is_subtask = bool(
+                    task.parent_task_id and task.parent_task_id in active_task_ids
+                )
+                widget.set_indent(is_subtask)
                 widget.update_display()
 
     def move_focus(self, direction: int):

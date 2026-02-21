@@ -7,7 +7,7 @@ from datetime import datetime, date
 from pathlib import Path
 from typing import Optional
 
-from flask import Flask, jsonify, render_template
+from flask import Flask, jsonify, render_template, request
 
 # Resolve paths without importing config (avoids PyQt6 dependency chain)
 ETIME_DIR = Path.home() / ".etime"
@@ -142,20 +142,37 @@ def _format_task_for_api(t: dict) -> dict:
         ),
         "completed_at": t.get("completed_at", ""),
         "created_at": t.get("created_at", ""),
+        "work_intervals": t.get("work_intervals", []),
+        "parent_task_id": t.get("parent_task_id"),
+        "id": t.get("id", ""),
     }
 
 
 @app.route("/")
 def index():
     """Serve the dashboard HTML."""
-    target = _date_filter or date.today()
+    date_param = request.args.get("date")
+    if date_param:
+        try:
+            target = date.fromisoformat(date_param)
+        except ValueError:
+            target = _date_filter or date.today()
+    else:
+        target = _date_filter or date.today()
     return render_template("index.html", date_str=target.isoformat())
 
 
 @app.route("/api/data")
 def api_data():
     """Return all dashboard data as JSON."""
-    target = _date_filter or date.today()
+    date_param = request.args.get("date")
+    if date_param:
+        try:
+            target = date.fromisoformat(date_param)
+        except ValueError:
+            target = _date_filter or date.today()
+    else:
+        target = _date_filter or date.today()
 
     history = _load_history()
     day_tasks = _filter_by_date(history, target)

@@ -49,7 +49,12 @@ def launch(port: int = DASHBOARD_PORT, date_filter: str | None = None) -> None:
         return
 
     server_path = Path(__file__).parent / "server.py"
-    cmd = [sys.executable, str(server_path), "--port", str(port)]
+
+    # Use venv Python if available (has Flask installed)
+    venv_python = Path(__file__).parent.parent / ".venv" / "bin" / "python"
+    python_exe = str(venv_python) if venv_python.exists() else sys.executable
+
+    cmd = [python_exe, str(server_path), "--port", str(port)]
     if date_filter:
         cmd.extend(["--date", date_filter])
 
