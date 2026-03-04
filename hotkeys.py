@@ -32,6 +32,7 @@ class HotkeyManager:
         self.callbacks: Dict[int, Callable] = {}
         self.tap = None
         self.run_loop_source = None
+        self._health_check_count: int = 0
 
     def register(self, keycode: int, callback: Callable) -> None:
         """
@@ -95,7 +96,21 @@ class HotkeyManager:
         Periodic health check for the event tap.
         Call this every few seconds to detect and recover from
         disabled taps (e.g. caused by Spotify or other apps).
+        Also proactively recreates the tap every ~60s to recover
+        from silent failures where the tap appears enabled but
+        stops firing callbacks.
         """
+        self._health_check_count += 1
+
+        # Proactive full recreation every ~60s (20 checks * 3s interval)
+        if self._health_check_count % 20 == 0:
+            self.stop()
+            if self._create_tap():
+                print("Event tap proactively recreated")
+            else:
+                print("ERROR: Failed to proactively recreate event tap")
+            return
+
         if not self.tap:
             print("WARNING: Event tap is None - attempting full recreation")
             if self._create_tap():

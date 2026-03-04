@@ -354,6 +354,7 @@ etime-dash-day    # CLI tool for historical date dashboards
 - Ensure Accessibility permissions are granted
 - Check System Settings → Privacy & Security → Accessibility
 - Restart the app after granting permissions
+- **Hotkeys stop working after a while**: macOS can silently kill the Quartz event tap even though it reports as enabled. etime proactively recreates the tap every ~60 seconds to recover from this. If hotkeys still don't respond, restart the app. If the problem persists, try toggling the Accessibility permission off and back on.
 
 ### Alarm doesn't play
 - Default alarm uses system "Ping" sound
