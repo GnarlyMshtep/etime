@@ -22,6 +22,7 @@ A macOS floating overlay timer app for productivity tracking. Track time spent o
 - **Subtasks** - Create subtasks nested under parent tasks (cosmetic grouping with independent timers)
 - **Work intervals** - Precise time tracking records when work actually happens (pause/resume timestamps)
 - **Sleep detection** - Auto-pauses all tasks when Mac sleeps, resumes on wake
+- **Task stash** - Hide paused tasks from the overlay without completing them; reveal with "show all" toggle
 - **Help menu** - Toggle hotkey reference with ⌃⌥⌘H
 - **Web dashboard** - Daily review with date picker, interval-based timeline, and sortable task table
 
@@ -69,6 +70,9 @@ All hotkeys use: **Control (⌃) + Option (⌥) + Command (⌘)**
 | ⌃⌥⌘S | **Shrink** - Hide/show the overlay window |
 | ⌃⌥⌘H | **Help** - Toggle hotkey reference popup |
 | ⌃⌥⌘T | **Toggle subtask** - Make focused task a subtask of the task above it |
+| ⌃⌥⌘A | **All** - Toggle show all (reveals stashed tasks) |
+| ⇧⌃⌥⌘→ | **Stash** - Hide focused task (must be paused) |
+| ⇧⌃⌥⌘← | **Unstash** - Restore focused task (in show-all mode) |
 
 ### Subtasks
 
@@ -89,6 +93,17 @@ Subtasks provide a cosmetic parent-child grouping. Each subtask has its own inde
 - Subtasks show indented in the overlay when their parent is active
 - Completing a parent does not affect subtasks — they remain active but lose their indent
 - Double-nesting (subtask of a subtask) works at the data level but only shows single indent in the overlay
+
+### Task Stash
+
+Stashing hides paused tasks from the overlay without completing or deleting them. Useful when the overlay gets cluttered with many tasks.
+
+- **Stash** (⇧⌃⌥⌘→): Hides the focused task. Only paused tasks can be stashed — pause first with ⌃⌥⌘P.
+- **Show all** (⌃⌥⌘A): Toggles visibility of stashed tasks. An "All" label appears at the top-left when active. Stashed tasks appear dimmed with a ⏸ prefix.
+- **Unstash** (⇧⌃⌥⌘←): Restores a stashed task to the normal view. Only works in show-all mode.
+- Stashed state persists across restarts.
+- Focus navigation skips stashed tasks in the normal view.
+- In show-all mode, stashing/unstashing updates the marker in-place (no animation).
 
 ### Work Intervals
 
@@ -208,6 +223,21 @@ Falls back to system "Glass" → "Purr" → "Hero".
      ├──→ pause (closes interval) ► ┌──────────────┤
      │    alarm silenced if active  │    PAUSED    │
      │                              │  GRAY text   │
+     │                              └──────┬───────┘
+     │                                     │
+     │                              stash (⇧⌃⌥⌘→)
+     │                                     ↓
+     │                              ┌──────────────┐
+     │                              │   STASHED    │
+     │                              │  hidden from │
+     │                              │  default view│
+     │                              └──────┬───────┘
+     │                                     │
+     │                              unstash (⇧⌃⌥⌘←)
+     │                              (in show-all mode)
+     │                                     ↓
+     │                              ┌──────────────┐
+     │                              │  → PAUSED    │
      │                              └──────────────┘
      │
      └──→ complete (closes interval) ► ┌───────────────┐
@@ -246,6 +276,7 @@ Wake  → auto-resumes those tasks (opens new intervals)
 | **Overtime** | **Red text** (#D32F2F) | elapsed ≥ estimated |
 | **Alarmed** | **Bold text** | Alarm triggers at 1x, 2x, 3x... |
 | **Subtask** | Indented left margin | parent_task_id set, parent active |
+| **Stashed (show-all)** | Dimmed gray bg, ⏸ prefix, gray text | is_stashed=True, show-all mode on |
 
 ### Alarm Lifecycle
 

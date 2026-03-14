@@ -12,6 +12,7 @@ from Quartz import (
     CGEventGetIntegerValueField, kCGKeyboardEventKeycode,
     CGEventGetFlags, CGEventMaskBit, kCGEventKeyDown,
     kCGEventFlagMaskControl, kCGEventFlagMaskAlternate, kCGEventFlagMaskCommand,
+    kCGEventFlagMaskShift,
     kCGEventTapDisabledByTimeout, kCGEventTapDisabledByUserInput
 )
 from ApplicationServices import AXIsProcessTrusted
@@ -29,20 +30,21 @@ class HotkeyManager:
 
     def __init__(self):
         """Initialize hotkey manager."""
-        self.callbacks: Dict[int, Callable] = {}
+        self.callbacks: Dict[tuple[int, bool], Callable] = {}
         self.tap = None
         self.run_loop_source = None
         self._health_check_count: int = 0
 
-    def register(self, keycode: int, callback: Callable) -> None:
+    def register(self, keycode: int, callback: Callable, shift: bool = False) -> None:
         """
         Register a hotkey callback.
 
         Args:
             keycode: Virtual key code (e.g., KEY_N).
             callback: Function to call when hotkey is pressed.
+            shift: If True, requires Shift as additional modifier.
         """
-        self.callbacks[keycode] = callback
+        self.callbacks[(keycode, shift)] = callback
 
     def start(self) -> bool:
         """
@@ -172,15 +174,15 @@ class HotkeyManager:
             )
 
             # Check if this is one of our hotkeys
-            if relevant_flags == HOTKEY_MODIFIERS and keycode in self.callbacks:
-                # Call the registered callback
-                try:
-                    self.callbacks[keycode]()
-                except Exception as e:
-                    print(f"Error in hotkey callback for keycode {keycode}: {e}")
-
-                # Consume the event (don't pass it through)
-                return None
+            if relevant_flags == HOTKEY_MODIFIERS:
+                shift_pressed = bool(flags & kCGEventFlagMaskShift)
+                key = (keycode, shift_pressed)
+                if key in self.callbacks:
+                    try:
+                        self.callbacks[key]()
+                    except Exception as e:
+                        print(f"Error in hotkey callback for keycode {keycode}: {e}")
+                    return None
 
         except Exception as e:
             print(f"Error in event callback: {e}")

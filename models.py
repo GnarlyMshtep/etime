@@ -32,6 +32,7 @@ class Task:
     last_alarm_level: int = 0            # 0=none, 1=overtime, 2=2x, 3=3x...
     work_intervals: List[dict] = field(default_factory=list)  # [{"start": ISO, "end": ISO|None}]
     parent_task_id: Optional[str] = None  # ID of parent task (for subtasks)
+    is_stashed: bool = False  # Hidden from default view but not completed
 
     def __post_init__(self):
         """Auto-generate ID and timestamp if not provided."""
@@ -82,4 +83,6 @@ class Task:
             d['work_intervals'] = []
         if 'parent_task_id' not in d:
             d['parent_task_id'] = None
+        if 'is_stashed' not in d:
+            d['is_stashed'] = False
         return cls(**d)

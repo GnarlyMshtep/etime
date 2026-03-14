@@ -17,7 +17,7 @@ from timer_engine import TimerEngine
 from overlay import OverlayWindow
 from task_dialog import TaskDialog
 from hotkeys import HotkeyManager
-from config import KEY_N, KEY_P, KEY_C, KEY_Q, KEY_S, KEY_U, KEY_H, KEY_T, KEY_UP, KEY_DOWN
+from config import KEY_N, KEY_P, KEY_C, KEY_Q, KEY_S, KEY_U, KEY_H, KEY_T, KEY_UP, KEY_DOWN, KEY_A, KEY_LEFT, KEY_RIGHT
 from sounds import play_alarm_loop, stop_alarm, play_success_sound, play_ambitious_success_sound
 import dashboard
 
@@ -66,6 +66,9 @@ class HelpDialog(QDialog):
             ("⌃⌥⌘S", "Toggle overlay visibility"),
             ("⌃⌥⌘H", "Show this help"),
             ("⌃⌥⌘T", "Toggle subtask (of task above)"),
+            ("⌃⌥⌘A", "Toggle show all (stashed tasks)"),
+            ("⇧⌃⌥⌘→", "Stash focused task"),
+            ("⇧⌃⌥⌘←", "Unstash focused task"),
             ("⌃⌥⌘↑", "Focus previous task"),
             ("⌃⌥⌘↓", "Focus next task"),
         ]
@@ -98,6 +101,7 @@ class AppController(QObject):
         self.last_completed_task: Optional[Task] = None  # For undo
         self.last_completed_index: int = -1  # Original position for undo
         self._auto_paused_tasks: set = set()  # Task IDs paused due to sleep
+        self.show_all_mode: bool = False  # Toggle visibility of stashed tasks
 
         # Initialize
         self._initialize()
@@ -137,6 +141,9 @@ class AppController(QObject):
         self.hotkey_manager.register(KEY_U, self.undo_complete)
         self.hotkey_manager.register(KEY_H, self.show_help)
         self.hotkey_manager.register(KEY_T, self.toggle_subtask)
+        self.hotkey_manager.register(KEY_RIGHT, self.stash_task, shift=True)
+        self.hotkey_manager.register(KEY_LEFT, self.unstash_task, shift=True)
+        self.hotkey_manager.register(KEY_A, self.toggle_show_all)
 
         if not self.hotkey_manager.start():
             # Show error dialog if hotkeys fail
@@ -268,10 +275,15 @@ class AppController(QObject):
 
         print(f"After task creation: {len(self.tasks)} tasks (inserted at {new_index})")
 
-        # Always focus the new task
-        self.overlay.focused_index = new_index
+        # Always focus the new task (convert to visible index)
+        visible = self.overlay._visible_tasks()
+        visible_index = next(
+            (i for i, t in enumerate(visible) if t.id == task.id),
+            len(visible) - 1
+        )
+        self.overlay.focused_index = visible_index
         self.overlay.update_display()
-        print(f"Set focused index to {new_index}")
+        print(f"Set focused index to {visible_index}")
 
         # Ensure overlay is visible
         if not self.overlay_visible:
@@ -397,10 +409,11 @@ class AppController(QObject):
         # Remove from active tasks
         self.tasks.remove(task)
 
-        # Update focus index if needed
-        if self.overlay.focused_index >= len(self.tasks) and len(self.tasks) > 0:
-            self.overlay.focused_index = len(self.tasks) - 1
-        elif len(self.tasks) == 0:
+        # Update focus index if needed (use visible task count)
+        visible_count = len(self.overlay._visible_tasks())
+        if self.overlay.focused_index >= visible_count and visible_count > 0:
+            self.overlay.focused_index = visible_count - 1
+        elif visible_count == 0:
             self.overlay.focused_index = -1
 
         # Determine if task was completed within ambitious time
@@ -486,8 +499,13 @@ class AppController(QObject):
         # Re-add to overlay
         self.overlay.insert_task(task, insert_index)
 
-        # Set focus to restored task
-        self.overlay.focused_index = insert_index
+        # Set focus to restored task (convert to visible index)
+        visible = self.overlay._visible_tasks()
+        visible_index = next(
+            (i for i, t in enumerate(visible) if t.id == task.id),
+            len(visible) - 1
+        )
+        self.overlay.focused_index = visible_index
         self.overlay.update_display()
 
         # Save active tasks
@@ -506,22 +524,73 @@ class AppController(QObject):
             print("No task focused")
             return
 
+        visible = self.overlay._visible_tasks()
         idx = self.overlay.focused_index
         if task.parent_task_id:
             # Already a subtask — remove the link
             task.parent_task_id = None
             print(f"Removed subtask link from '{task.name}'")
         else:
-            # Become a subtask of the task above
+            # Become a subtask of the task above (in visible list)
             if idx <= 0:
                 print("No task above to use as parent")
                 return
-            parent = self.tasks[idx - 1]
+            parent = visible[idx - 1]
             task.parent_task_id = parent.id
             print(f"'{task.name}' is now a subtask of '{parent.name}'")
 
         save_active_tasks(self.tasks)
         self.overlay.update_display()
+
+    def stash_task(self):
+        """Stash the focused task — hide from default view. Only paused tasks can be stashed."""
+        task = self.overlay.get_focused_task()
+        if not task or task.is_stashed:
+            return
+
+        if task.state == TaskState.ONGOING:
+            print("Cannot stash an ongoing task — pause it first")
+            return
+
+        print(f"Stashing task: {task.name}")
+        task.is_stashed = True
+
+        if self.show_all_mode:
+            # In show-all mode, just update appearance (no swipe away)
+            self.overlay.update_display()
+        else:
+            # In normal mode, animate out and adjust focus
+            visible = self.overlay._visible_tasks()
+            if len(visible) > 0:
+                self.overlay.focused_index = min(self.overlay.focused_index, len(visible) - 1)
+            else:
+                self.overlay.focused_index = -1
+            self.overlay.stash_task_widget(task.id)
+            self.overlay.update_display()
+
+        save_active_tasks(self.tasks)
+
+    def unstash_task(self):
+        """Unstash the focused task (only in show-all mode)."""
+        if not self.show_all_mode:
+            print("Can only unstash in show-all mode")
+            return
+
+        task = self.overlay.get_focused_task()
+        if not task or not task.is_stashed:
+            return
+
+        print(f"Unstashing task: {task.name}")
+        task.is_stashed = False
+        self.overlay.update_display()
+        save_active_tasks(self.tasks)
+
+    def toggle_show_all(self):
+        """Toggle visibility of stashed tasks."""
+        self.show_all_mode = not self.show_all_mode
+        self.overlay.show_all = self.show_all_mode
+        self.overlay.rebuild_widgets()
+        print(f"Show all: {self.show_all_mode}")
 
     def _on_sleep(self):
         """Pause all ongoing tasks when Mac goes to sleep."""

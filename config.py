@@ -62,3 +62,6 @@ KEY_H = 4     # H key - Help menu
 KEY_T = 17    # T key - Toggle subtask
 KEY_UP = 126  # Up arrow - Focus up
 KEY_DOWN = 125  # Down arrow - Focus down
+KEY_A = 0       # A key - Toggle show all (stashed tasks)
+KEY_LEFT = 123  # Left arrow - Unstash (with Shift)
+KEY_RIGHT = 124 # Right arrow - Stash (with Shift)

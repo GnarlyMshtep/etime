@@ -27,6 +27,7 @@ class TaskWidget(QWidget):
         self.is_focused = is_focused
         self.is_alarmed = False  # Track if task has active alarm
         self.is_subtask = False  # Track indentation
+        self.is_stashed = False  # Track stashed display state
 
         # Create layout
         layout = QHBoxLayout()
@@ -99,13 +100,22 @@ class TaskWidget(QWidget):
             # Non-focused ongoing task is dimmed gray
             color = COLOR_UNFOCUSED
 
+        # Stashed tasks get dimmed appearance with marker
+        self.is_stashed = self.property("stashed") or False
+        if self.is_stashed:
+            color = "#999999"
+            bg_color = "#F0F0F0" if self.is_focused else "#E8E8E8"
+            border_color = "#CCCCCC"
+        else:
+            bg_color = COLOR_FOCUSED if self.is_focused else "#FFFFFF"
+            border_color = "#DDDDDD"
+
         # Apply styling
-        bg_color = COLOR_FOCUSED if self.is_focused else "#FFFFFF"  # White for non-focused (makes corners visible)
         self.setStyleSheet(f"""
             TaskWidget {{
                 background-color: {bg_color};
                 border-radius: 6px;
-                border: 1px solid #DDDDDD;
+                border: 1px solid {border_color};
                 padding: 2px;
             }}
             QLabel {{
@@ -117,6 +127,10 @@ class TaskWidget(QWidget):
 
         # Update focus indicator
         self.focus_label.setText(FOCUS_INDICATOR if self.is_focused else NO_FOCUS_INDICATOR)
+
+        # Update name with stash marker
+        name_text = f"⏸ {self.task.name}" if self.is_stashed else self.task.name
+        self.name_label.setText(name_text)
 
         # Make text bold if alarmed
         if self.is_alarmed:
@@ -166,6 +180,7 @@ class OverlayWindow(QWidget):
         self.tasks = tasks
         self.app_controller = app_controller  # Reference to AppController for alarm status
         self.task_widgets: Dict[str, TaskWidget] = {}  # task_id -> TaskWidget
+        self.show_all: bool = False  # When True, stashed tasks are visible
         self.focused_index = 0 if tasks else -1
 
         self._setup_window()
@@ -211,10 +226,30 @@ class OverlayWindow(QWidget):
         self.layout.setSpacing(4)  # Increased spacing between tasks
         self.setLayout(self.layout)
 
+        # "All" mode indicator (hidden by default)
+        self.show_all_label = QLabel("All")
+        self.show_all_label.setStyleSheet(
+            "color: #666666; font-size: 11px; font-weight: bold; "
+            "background: transparent; border: none; padding: 0px 2px;"
+        )
+        self.show_all_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        self.show_all_label.hide()
+        self.layout.insertWidget(0, self.show_all_label)
+
     def _populate_tasks(self):
         """Populate window with existing tasks."""
-        for i, task in enumerate(self.tasks):
-            self._add_task_widget(task, i == self.focused_index, animate=False)
+        visible = self._visible_tasks()
+        # Set initial focus to first visible task
+        if visible:
+            self.focused_index = 0
+        else:
+            self.focused_index = -1
+        for i, task in enumerate(visible):
+            widget = TaskWidget(task, i == self.focused_index)
+            if task.is_stashed:
+                widget.setProperty("stashed", True)
+            self.task_widgets[task.id] = widget
+            self.layout.addWidget(widget)
 
     def _add_task_widget(self, task: Task, is_focused: bool, animate: bool = True):
         """Add a task widget to the layout."""
@@ -241,12 +276,23 @@ class OverlayWindow(QWidget):
         """Insert a task at a specific position with fade-in animation.
 
         Used for undo functionality to restore task at original position.
+        The index is into self.tasks; we convert to visible layout index.
         """
-        is_focused = index == self.focused_index
+        # Skip adding widget if task is stashed and not in show-all mode
+        if task.is_stashed and not self.show_all:
+            return
+
+        # Find the correct layout position among visible tasks
+        visible = self._visible_tasks()
+        layout_index = next(
+            (i for i, t in enumerate(visible) if t.id == task.id),
+            len(visible) - 1
+        )
+        is_focused = layout_index == self.focused_index
 
         widget = TaskWidget(task, is_focused)
         self.task_widgets[task.id] = widget
-        self.layout.insertWidget(index, widget)
+        self.layout.insertWidget(layout_index, widget)
 
         self._fade_in_widget(widget)
         self.adjustSize()
@@ -371,10 +417,65 @@ class OverlayWindow(QWidget):
 
         QTimer.singleShot(600, cleanup)
 
+    def _visible_tasks(self) -> List[Task]:
+        """Return tasks that should be visible based on show_all mode."""
+        if self.show_all:
+            return list(self.tasks)
+        return [t for t in self.tasks if not t.is_stashed]
+
+    def stash_task_widget(self, task_id: str):
+        """Animate out and remove widget for a stashed task."""
+        if task_id not in self.task_widgets:
+            return
+        widget = self.task_widgets[task_id]
+
+        def on_fade_finished():
+            self.layout.removeWidget(widget)
+            widget.deleteLater()
+            del self.task_widgets[task_id]
+            self.adjustSize()
+
+        self._fade_out_widget(widget, callback=on_fade_finished)
+
+    def rebuild_widgets(self):
+        """Rebuild all widgets based on current show_all state."""
+        # Remove all existing task widgets (keep show_all_label)
+        for task_id, widget in list(self.task_widgets.items()):
+            self.layout.removeWidget(widget)
+            widget.deleteLater()
+        self.task_widgets.clear()
+
+        # Show/hide "All" indicator
+        if self.show_all:
+            self.show_all_label.show()
+        else:
+            self.show_all_label.hide()
+
+        # Re-add widgets for visible tasks
+        visible = self._visible_tasks()
+        for i, task in enumerate(visible):
+            is_focused = (i == self.focused_index)
+            widget = TaskWidget(task, is_focused)
+            if task.is_stashed:
+                widget.setProperty("stashed", True)
+            self.task_widgets[task.id] = widget
+            self.layout.addWidget(widget)
+            self._fade_in_widget(widget)
+
+        # Clamp focus
+        if visible:
+            self.focused_index = max(0, min(self.focused_index, len(visible) - 1))
+        else:
+            self.focused_index = -1
+
+        self.adjustSize()
+        self.update_display()
+
     def update_display(self):
         """Update all task widgets."""
         active_task_ids = {t.id for t in self.tasks}
-        for i, task in enumerate(self.tasks):
+        visible = self._visible_tasks()
+        for i, task in enumerate(visible):
             if task.id in self.task_widgets:
                 widget = self.task_widgets[task.id]
                 widget.task = task
@@ -388,6 +489,8 @@ class OverlayWindow(QWidget):
                     task.parent_task_id and task.parent_task_id in active_task_ids
                 )
                 widget.set_indent(is_subtask)
+                # Apply stashed styling in show-all mode
+                widget.setProperty("stashed", task.is_stashed)
                 widget.update_display()
 
     def move_focus(self, direction: int):
@@ -397,29 +500,31 @@ class OverlayWindow(QWidget):
         Args:
             direction: -1 for up, +1 for down
         """
-        if not self.tasks:
+        visible = self._visible_tasks()
+        if not visible:
             return
 
         # Update focused index with wrap-around
         old_index = self.focused_index
-        self.focused_index = (self.focused_index + direction) % len(self.tasks)
+        self.focused_index = (self.focused_index + direction) % len(visible)
 
         # Update widget displays
-        if old_index >= 0 and old_index < len(self.tasks):
-            task_id = self.tasks[old_index].id
+        if 0 <= old_index < len(visible):
+            task_id = visible[old_index].id
             if task_id in self.task_widgets:
                 self.task_widgets[task_id].set_focused(False)
 
-        if self.focused_index >= 0 and self.focused_index < len(self.tasks):
-            task_id = self.tasks[self.focused_index].id
+        if 0 <= self.focused_index < len(visible):
+            task_id = visible[self.focused_index].id
             if task_id in self.task_widgets:
                 self.task_widgets[task_id].set_focused(True)
 
     def get_focused_task(self) -> Optional[Task]:
         """Get currently focused task."""
-        if self.focused_index < 0 or self.focused_index >= len(self.tasks):
+        visible = self._visible_tasks()
+        if self.focused_index < 0 or self.focused_index >= len(visible):
             return None
-        return self.tasks[self.focused_index]
+        return visible[self.focused_index]
 
     def closeEvent(self, event):
         """Handle window close event - prevent accidental closes."""
