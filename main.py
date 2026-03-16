@@ -619,6 +619,9 @@ class AppController(QObject):
         """Resume auto-paused tasks when Mac wakes."""
         print("System woke — resuming auto-paused tasks")
 
+        # Force-recreate the event tap — macOS often silently kills it across sleep
+        self.hotkey_manager.force_recreate()
+
         resumed = 0
         for task in self.tasks:
             if task.id in self._auto_paused_tasks and task.state == TaskState.PAUSED:

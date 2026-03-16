@@ -8,7 +8,7 @@ from Quartz import (
     CGEventTapCreate, kCGSessionEventTap, kCGHeadInsertEventTap,
     kCGEventTapOptionDefault, CGEventTapEnable, CGEventTapIsEnabled,
     CFMachPortCreateRunLoopSource, CFRunLoopGetCurrent,
-    CFRunLoopAddSource, kCFRunLoopCommonModes,
+    CFRunLoopAddSource, CFRunLoopRemoveSource, kCFRunLoopCommonModes,
     CGEventGetIntegerValueField, kCGKeyboardEventKeycode,
     CGEventGetFlags, CGEventMaskBit, kCGEventKeyDown,
     kCGEventFlagMaskControl, kCGEventFlagMaskAlternate, kCGEventFlagMaskCommand,
@@ -190,8 +190,33 @@ class HotkeyManager:
         # Pass through the event
         return event
 
+    def force_recreate(self) -> bool:
+        """Force full teardown and recreation of the event tap.
+
+        Use after sleep/wake or when the tap silently stops working.
+        Returns True if recreation succeeded.
+        """
+        print("Force-recreating event tap...")
+        self.stop()
+        success = self._create_tap()
+        if success:
+            print("Event tap force-recreated successfully")
+        else:
+            print("ERROR: Event tap force-recreation failed")
+        return success
+
     def stop(self):
         """Stop listening for hotkeys."""
+        # Properly remove the run loop source before discarding
+        if self.run_loop_source:
+            try:
+                CFRunLoopRemoveSource(
+                    CFRunLoopGetCurrent(),
+                    self.run_loop_source,
+                    kCFRunLoopCommonModes
+                )
+            except Exception as e:
+                print(f"Warning: failed to remove run loop source: {e}")
         if self.tap:
             CGEventTapEnable(self.tap, False)
             self.tap = None
