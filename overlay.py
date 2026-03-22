@@ -292,7 +292,8 @@ class OverlayWindow(QWidget):
 
         widget = TaskWidget(task, is_focused)
         self.task_widgets[task.id] = widget
-        self.layout.insertWidget(layout_index, widget)
+        # +1 to account for show_all_label at layout position 0
+        self.layout.insertWidget(layout_index + 1, widget)
 
         self._fade_in_widget(widget)
         self.adjustSize()

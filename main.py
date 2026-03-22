@@ -98,8 +98,9 @@ class AppController(QObject):
         self.overlay_visible = True  # Track overlay visibility
         self.active_alarms = set()  # Track which tasks have active alarms
         self.previous_app = None  # Track previously focused app for focus restoration
-        self.last_completed_task: Optional[Task] = None  # For undo
-        self.last_completed_index: int = -1  # Original position for undo
+        self.last_completed_task: Optional[Task] = None  # For undo completion
+        self.last_completed_index: int = -1  # Original position for undo completion
+        self.last_created_task: Optional[Task] = None  # For undo creation
         self._auto_paused_tasks: set = set()  # Task IDs paused due to sleep
         self.show_all_mode: bool = False  # Toggle visibility of stashed tasks
 
@@ -138,7 +139,7 @@ class AppController(QObject):
         self.hotkey_manager.register(KEY_UP, self.focus_up)
         self.hotkey_manager.register(KEY_DOWN, self.focus_down)
         self.hotkey_manager.register(KEY_Q, self.dismiss_alarm)
-        self.hotkey_manager.register(KEY_U, self.undo_complete)
+        self.hotkey_manager.register(KEY_U, self.undo)
         self.hotkey_manager.register(KEY_H, self.show_help)
         self.hotkey_manager.register(KEY_T, self.toggle_subtask)
         self.hotkey_manager.register(KEY_RIGHT, self.stash_task, shift=True)
@@ -292,6 +293,10 @@ class AppController(QObject):
             self.overlay_visible = True
             print("Overlay shown for new task")
 
+        # Track for undo
+        self.last_created_task = task
+        self.last_completed_task = None  # New action clears old undo
+
         # Save
         save_active_tasks(self.tasks)
         print("Task saved successfully")
@@ -396,6 +401,7 @@ class AppController(QObject):
         # Save state for undo (before modifying)
         self.last_completed_task = task
         self.last_completed_index = task_index
+        self.last_created_task = None  # New action clears old undo
 
         task.end_interval()
 
@@ -473,12 +479,43 @@ class AppController(QObject):
             self.overlay_visible = True
             print("Overlay shown")
 
-    def undo_complete(self):
-        """Undo the last task completion."""
-        if self.last_completed_task is None:
+    def undo(self):
+        """Undo the last action (task creation or completion)."""
+        if self.last_created_task is not None:
+            self._undo_creation()
+        elif self.last_completed_task is not None:
+            self._undo_completion()
+        else:
             print("Nothing to undo")
-            return
 
+    def _undo_creation(self):
+        """Undo the last task creation — removes the task entirely."""
+        task = self.last_created_task
+        print(f"Undoing creation of: {task.name}")
+
+        # End any open interval
+        if task.work_intervals and task.work_intervals[-1]["end"] is None:
+            task.end_interval()
+
+        # Remove from task list and overlay
+        if task in self.tasks:
+            self.tasks.remove(task)
+        self.overlay.remove_task(task.id)
+
+        # Adjust focus
+        visible = self.overlay._visible_tasks()
+        if visible:
+            self.overlay.focused_index = min(self.overlay.focused_index, len(visible) - 1)
+        else:
+            self.overlay.focused_index = -1
+        self.overlay.update_display()
+
+        save_active_tasks(self.tasks)
+        self.last_created_task = None
+        print(f"Task '{task.name}' removed")
+
+    def _undo_completion(self):
+        """Undo the last task completion — restores the task."""
         task = self.last_completed_task
         print(f"Undoing completion of: {task.name}")
 

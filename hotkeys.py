@@ -59,14 +59,37 @@ class HotkeyManager:
             print("Please enable etime in System Settings → Privacy & Security → Accessibility")
             return False
 
-        if not self._create_tap():
-            return False
+        import time
+        for attempt in range(3):
+            if self._create_tap():
+                print(f"Hotkey manager started successfully (attempt {attempt + 1})")
+                return True
+            print(f"Event tap creation failed (attempt {attempt + 1}/3), retrying...")
+            time.sleep(1)
 
-        print("Hotkey manager started successfully")
-        return True
+        print("ERROR: All event tap creation attempts failed")
+        return False
 
     def _create_tap(self) -> bool:
         """Create and enable the event tap. Returns True on success."""
+        # Clean up any existing tap first
+        if self.run_loop_source:
+            try:
+                CFRunLoopRemoveSource(
+                    CFRunLoopGetCurrent(),
+                    self.run_loop_source,
+                    kCFRunLoopCommonModes
+                )
+            except Exception:
+                pass
+        if self.tap:
+            try:
+                CGEventTapEnable(self.tap, False)
+            except Exception:
+                pass
+        self.tap = None
+        self.run_loop_source = None
+
         # Create event tap
         self.tap = CGEventTapCreate(
             kCGSessionEventTap,
@@ -164,6 +187,7 @@ class HotkeyManager:
 
             # Get modifier flags
             flags = CGEventGetFlags(event)
+
 
             # Check if our modifiers are pressed
             # Mask to only the modifiers we care about
