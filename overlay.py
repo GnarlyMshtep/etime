@@ -26,8 +26,14 @@ class TaskWidget(QWidget):
         self.task = task
         self.is_focused = is_focused
         self.is_alarmed = False  # Track if task has active alarm
-        self.is_subtask = False  # Track indentation
+        self.depth = 0  # Nesting depth (0 = top-level, 1 = subtask, 2 = sub-subtask, ...)
+        self.has_children = False  # Whether this task has subtasks (shows a fold triangle)
+        self.is_collapsed = False  # Whether this task's subtree is currently folded
+        self.has_active_hidden = False  # A folded-away descendant is currently running
+        self.hidden_count = 0  # Number of folded-away non-stashed descendants (shown when collapsed)
+        self.parked_count = 0  # Number of folded-away stashed descendants (the "p" in "n/p")
         self.is_stashed = False  # Track stashed display state
+        self.is_recent = False  # One of the most-recently-active tasks (gets a highlight)
 
         # Create layout
         layout = QHBoxLayout()
@@ -110,12 +116,26 @@ class TaskWidget(QWidget):
             bg_color = COLOR_FOCUSED if self.is_focused else "#FFFFFF"
             border_color = "#DDDDDD"
 
+        # A folded category with a running subtask inside gets a green accent, so
+        # you can tell work is still happening even though it's collapsed.
+        if self.is_collapsed and self.has_active_hidden:
+            color = COLOR_AMBITIOUS
+            bg_color = "#C8E6C9" if self.is_focused else "#E8F5E9"
+            border_color = "#4CAF50"
+
+        # Recently-active tasks (or the visible section header of a folded-away
+        # active task) get a gold border so you can spot where work is happening.
+        border_width = 1
+        if self.is_recent:
+            border_color = "#FF9800"
+            border_width = 2
+
         # Apply styling
         self.setStyleSheet(f"""
             TaskWidget {{
                 background-color: {bg_color};
                 border-radius: 6px;
-                border: 1px solid {border_color};
+                border: {border_width}px solid {border_color};
                 padding: 2px;
             }}
             QLabel {{
@@ -128,8 +148,23 @@ class TaskWidget(QWidget):
         # Update focus indicator
         self.focus_label.setText(FOCUS_INDICATOR if self.is_focused else NO_FOCUS_INDICATOR)
 
-        # Update name with stash marker
-        name_text = f"⏸ {self.task.name}" if self.is_stashed else self.task.name
+        # Compose name prefix: a fold triangle for parents, a bullet for leaf
+        # subtasks, plus the stash marker. At most one hierarchy glyph per row.
+        prefix_parts = []
+        if self.has_children:
+            prefix_parts.append("▸" if self.is_collapsed else "▾")  # disclosure triangle
+        elif self.depth >= 1:
+            prefix_parts.append("•")  # bullet marking a (sub)subtask leaf
+        if self.is_stashed:
+            prefix_parts.append("⏸")
+        name_text = " ".join(prefix_parts + [self.task.name]) if prefix_parts else self.task.name
+        # When folded, show how many subtasks are hidden away: (n) or (n/p) where
+        # n = non-stashed descendants, p = parked (stashed) descendants.
+        if self.is_collapsed and (self.hidden_count > 0 or self.parked_count > 0):
+            if self.parked_count > 0:
+                name_text = f"{name_text}  ({self.hidden_count}/{self.parked_count})"
+            else:
+                name_text = f"{name_text}  ({self.hidden_count})"
         self.name_label.setText(name_text)
 
         # Make text bold if alarmed
@@ -154,13 +189,39 @@ class TaskWidget(QWidget):
         self.is_alarmed = alarmed
         self.update_display()
 
-    def set_indent(self, indent: bool):
-        """Set subtask indentation and refresh display."""
-        if self.is_subtask != indent:
-            self.is_subtask = indent
+    def set_depth(self, depth: int):
+        """Set subtask nesting depth and refresh indentation.
+
+        Indentation grows with depth so a level-2 sub-subtask is visibly deeper
+        than a level-1 subtask (8px base + 22px per level).
+        """
+        if self.depth != depth:
+            self.depth = depth
             layout = self.layout()
-            left = 28 if indent else 8  # Extra indent for subtasks
+            left = 8 + depth * 22
             layout.setContentsMargins(left, 4, 8, 4)
+            self.update_display()
+
+    def set_fold_state(self, has_children: bool, is_collapsed: bool,
+                       has_active_hidden: bool = False, hidden_count: int = 0,
+                       parked_count: int = 0):
+        """Set fold-related display state (triangle, collapse tint, hidden count)."""
+        if (self.has_children != has_children
+                or self.is_collapsed != is_collapsed
+                or self.has_active_hidden != has_active_hidden
+                or self.hidden_count != hidden_count
+                or self.parked_count != parked_count):
+            self.has_children = has_children
+            self.is_collapsed = is_collapsed
+            self.has_active_hidden = has_active_hidden
+            self.hidden_count = hidden_count
+            self.parked_count = parked_count
+            self.update_display()
+
+    def set_recent(self, is_recent: bool):
+        """Mark/unmark this row as a recently-active task and refresh display."""
+        if self.is_recent != is_recent:
+            self.is_recent = is_recent
             self.update_display()
 
     @staticmethod
@@ -298,6 +359,39 @@ class OverlayWindow(QWidget):
         self._fade_in_widget(widget)
         self.adjustSize()
 
+    def sync_visible_widgets(self):
+        """Add/remove widgets so they match ``_visible_tasks()``.
+
+        Existing widgets are kept in place; only rows that should newly appear
+        are faded in and rows that should disappear are removed. Used when the
+        visible set changes without a full rebuild (e.g. auto-unfolding a parent
+        when a subtask is added to a folded section).
+        """
+        visible = self._visible_tasks()
+        visible_ids = {t.id for t in visible}
+
+        # Remove widgets for tasks that are no longer visible.
+        for task_id in list(self.task_widgets.keys()):
+            if task_id not in visible_ids:
+                widget = self.task_widgets.pop(task_id)
+                self.layout.removeWidget(widget)
+                widget.deleteLater()
+
+        # Add widgets for newly-visible tasks, in display order. Because we go in
+        # order and every earlier visible task already has a widget at its slot,
+        # inserting at layout_index + 1 (+1 for the show_all_label) is correct.
+        for layout_index, task in enumerate(visible):
+            if task.id not in self.task_widgets:
+                is_focused = (layout_index == self.focused_index)
+                widget = TaskWidget(task, is_focused)
+                if task.is_stashed:
+                    widget.setProperty("stashed", True)
+                self.task_widgets[task.id] = widget
+                self.layout.insertWidget(layout_index + 1, widget)
+                self._fade_in_widget(widget)
+
+        self.adjustSize()
+
     def _remove_task_animated(self, task_id: str, green_flash: bool = False,
                               confetti: bool = False, confetti_count: int = 12, callback=None):
         """Remove a task with optional green flash and confetti animations.
@@ -418,14 +512,89 @@ class OverlayWindow(QWidget):
 
         QTimer.singleShot(600, cleanup)
 
-    def _visible_tasks(self) -> List[Task]:
-        """Return tasks that should be visible based on show_all mode."""
-        if self.show_all:
-            return list(self.tasks)
-        return [t for t in self.tasks if not t.is_stashed]
+    def _task_depth(self, task: Task, by_id: Dict[str, Task]) -> int:
+        """Nesting depth of a task (0 = top-level), walking the parent chain.
 
-    def stash_task_widget(self, task_id: str):
-        """Animate out and remove widget for a stashed task."""
+        Stops at any parent not in the active list (e.g. a completed parent),
+        treating such a task as top-level. Cycle-guarded.
+        """
+        depth = 0
+        seen = set()
+        cur = task
+        while cur.parent_task_id and cur.parent_task_id in by_id:
+            if cur.parent_task_id in seen:
+                break
+            seen.add(cur.parent_task_id)
+            cur = by_id[cur.parent_task_id]
+            depth += 1
+        return depth
+
+    def _hidden_by_collapse(self, task: Task, by_id: Dict[str, Task]) -> bool:
+        """True if any ancestor of this task is collapsed (so it should be folded away)."""
+        seen = set()
+        cur = task
+        while cur.parent_task_id and cur.parent_task_id in by_id:
+            if cur.parent_task_id in seen:
+                break
+            seen.add(cur.parent_task_id)
+            parent = by_id[cur.parent_task_id]
+            if parent.is_collapsed:
+                return True
+            cur = parent
+        return False
+
+    def _has_children(self, task: Task) -> bool:
+        """True if any active task is a direct subtask of this one."""
+        return any(t.parent_task_id == task.id for t in self.tasks)
+
+    def _subtree_info(self, task: Task, by_id: Dict[str, Task]) -> tuple[int, int, bool]:
+        """Return (active_count, parked_count, any_descendant_ongoing) for a subtree.
+
+        ``active_count`` counts non-stashed descendants (the rows you'd see when
+        unfolded); ``parked_count`` counts stashed descendants (only visible with
+        "show all"). Walks each task's ancestor chain to see if ``task`` is an
+        ancestor; cycle-guarded and robust to non-contiguous subtrees.
+        """
+        count = 0
+        parked = 0
+        has_active = False
+        for t in self.tasks:
+            if t.id == task.id:
+                continue
+            cur = t
+            seen = set()
+            is_descendant = False
+            while cur.parent_task_id and cur.parent_task_id in by_id:
+                if cur.parent_task_id in seen:
+                    break
+                seen.add(cur.parent_task_id)
+                if cur.parent_task_id == task.id:
+                    is_descendant = True
+                    break
+                cur = by_id[cur.parent_task_id]
+            if is_descendant:
+                if t.is_stashed:
+                    parked += 1
+                else:
+                    count += 1
+                if t.state == TaskState.ONGOING:
+                    has_active = True
+        return count, parked, has_active
+
+    def _visible_tasks(self) -> List[Task]:
+        """Return tasks that should be visible (respecting stash + collapse state)."""
+        by_id = {t.id: t for t in self.tasks}
+        result = []
+        for t in self.tasks:
+            if not self.show_all and t.is_stashed:
+                continue
+            if self._hidden_by_collapse(t, by_id):
+                continue
+            result.append(t)
+        return result
+
+    def _fade_out_and_remove(self, task_id: str):
+        """Fade a single task widget out, then remove it from the layout."""
         if task_id not in self.task_widgets:
             return
         widget = self.task_widgets[task_id]
@@ -433,10 +602,42 @@ class OverlayWindow(QWidget):
         def on_fade_finished():
             self.layout.removeWidget(widget)
             widget.deleteLater()
-            del self.task_widgets[task_id]
+            # Guard against the widget having already been replaced/removed.
+            if self.task_widgets.get(task_id) is widget:
+                del self.task_widgets[task_id]
             self.adjustSize()
 
         self._fade_out_widget(widget, callback=on_fade_finished)
+
+    def stash_task_widget(self, task_id: str):
+        """Animate out and remove widget for a stashed task."""
+        self._fade_out_and_remove(task_id)
+
+    def toggle_collapse(self, task: Task) -> None:
+        """Fold/unfold a task's subtree, animating only the affected rows.
+
+        Only the descendant rows that appear/disappear are faded in/out — the
+        rest of the overlay stays in place (no full rebuild/flash).
+        """
+        before = {t.id for t in self._visible_tasks()}
+        task.is_collapsed = not task.is_collapsed
+        visible = self._visible_tasks()
+        after = {t.id for t in visible}
+
+        if task.is_collapsed:
+            # Fold: fade out the rows that just became hidden.
+            for task_id in before - after:
+                self._fade_out_and_remove(task_id)
+        else:
+            # Unfold: fade in the rows that just became visible, in display order
+            # (insert_task derives each row's layout slot from the visible list).
+            newly_visible = after - before
+            for t in visible:
+                if t.id in newly_visible and t.id not in self.task_widgets:
+                    self.insert_task(t, 0)
+
+        # Refresh remaining rows (parent triangle, focus, indentation).
+        self.update_display()
 
     def rebuild_widgets(self):
         """Rebuild all widgets based on current show_all state."""
@@ -472,10 +673,66 @@ class OverlayWindow(QWidget):
         self.adjustSize()
         self.update_display()
 
+    def _recently_active_ids(self, limit: int = 3) -> List[str]:
+        """IDs of the most-recently-active tasks, ranked most-recent first.
+
+        "Activity" is the latest work-interval start (falling back to started_at).
+        Tasks never worked on are excluded.
+        """
+        scored: List[tuple[str, str]] = []  # (timestamp_iso, task_id)
+        for t in self.tasks:
+            ts: Optional[str] = None
+            if t.work_intervals:
+                starts = [iv["start"] for iv in t.work_intervals if iv.get("start")]
+                if starts:
+                    ts = max(starts)
+            if ts is None:
+                ts = t.started_at
+            if ts:
+                scored.append((ts, t.id))
+        scored.sort(reverse=True)
+        return [tid for _, tid in scored[:limit]]
+
+    def _nearest_visible_ancestor(self, task: Task, by_id: Dict[str, Task],
+                                  visible_ids: set) -> Optional[str]:
+        """ID of the closest ancestor that is currently visible, or None."""
+        seen = set()
+        cur = task
+        while cur.parent_task_id and cur.parent_task_id in by_id:
+            if cur.parent_task_id in seen:
+                break
+            seen.add(cur.parent_task_id)
+            parent = by_id[cur.parent_task_id]
+            if parent.id in visible_ids:
+                return parent.id
+            cur = parent
+        return None
+
+    def _highlight_ids(self, by_id: Dict[str, Task], visible_ids: set) -> set:
+        """Visible task IDs to highlight for recent activity.
+
+        A recently-active task that is itself hidden inside a folded section
+        maps to its nearest visible ancestor (the section header) instead.
+        """
+        highlight: set = set()
+        for tid in self._recently_active_ids(limit=3):
+            task = by_id.get(tid)
+            if task is None:
+                continue
+            if tid in visible_ids:
+                highlight.add(tid)
+            else:
+                anc = self._nearest_visible_ancestor(task, by_id, visible_ids)
+                if anc:
+                    highlight.add(anc)
+        return highlight
+
     def update_display(self):
         """Update all task widgets."""
-        active_task_ids = {t.id for t in self.tasks}
+        by_id = {t.id: t for t in self.tasks}
         visible = self._visible_tasks()
+        visible_ids = {t.id for t in visible}
+        highlight_ids = self._highlight_ids(by_id, visible_ids)
         for i, task in enumerate(visible):
             if task.id in self.task_widgets:
                 widget = self.task_widgets[task.id]
@@ -485,11 +742,21 @@ class OverlayWindow(QWidget):
                 if self.app_controller:
                     is_alarmed = self.app_controller.is_task_alarmed(task.id)
                     widget.set_alarmed(is_alarmed)
-                # Indent if this is an active subtask (parent still in active list)
-                is_subtask = bool(
-                    task.parent_task_id and task.parent_task_id in active_task_ids
+                # Indent proportional to nesting depth (level 2 deeper than level 1)
+                widget.set_depth(self._task_depth(task, by_id))
+                # Fold triangle + (when collapsed) subtask count and active-inside tint
+                has_children = self._has_children(task)
+                if has_children:
+                    active_count, parked_count, has_active = self._subtree_info(task, by_id)
+                else:
+                    active_count, parked_count, has_active = 0, 0, False
+                widget.set_fold_state(
+                    has_children, task.is_collapsed,
+                    has_active_hidden=has_active, hidden_count=active_count,
+                    parked_count=parked_count,
                 )
-                widget.set_indent(is_subtask)
+                # Recent-activity highlight (see _recently_active_ids)
+                widget.set_recent(task.id in highlight_ids)
                 # Apply stashed styling in show-all mode
                 widget.setProperty("stashed", task.is_stashed)
                 widget.update_display()

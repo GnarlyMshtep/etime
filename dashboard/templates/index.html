@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>etime dashboard — {{ date_str }}</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='44' fill='%23d7d3cb' stroke='%237a5230' stroke-width='5'/%3E%3Cline x1='50' y1='50' x2='50' y2='24' stroke='%237a5230' stroke-width='7' stroke-linecap='round'/%3E%3Cline x1='50' y1='50' x2='70' y2='58' stroke='%237a5230' stroke-width='7' stroke-linecap='round'/%3E%3Ccircle cx='50' cy='50' r='5' fill='%237a5230'/%3E%3C/svg%3E">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
     <style>
         :root {
@@ -81,6 +82,53 @@
             padding: 20px;
             height: 300px;
             position: relative;
+        }
+        .cs-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 12px;
+        }
+        @media (max-width: 760px) { .cs-grid { grid-template-columns: 1fr; } }
+        .chart-subtitle {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-muted);
+            margin: 8px 0 6px;
+        }
+        .cs-summary {
+            font-size: 14px;
+            color: var(--text-muted);
+            margin-bottom: 14px;
+        }
+        .cs-summary b { color: var(--accent); font-size: 20px; }
+        .period-toggle {
+            display: flex;
+            gap: 4px;
+            justify-content: center;
+            margin-top: 10px;
+        }
+        .period-toggle button {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            color: var(--text-muted);
+            border-radius: 6px;
+            padding: 4px 16px;
+            font-family: inherit;
+            font-size: 13px;
+            cursor: pointer;
+        }
+        .period-toggle button.active {
+            background: var(--accent);
+            color: #fff;
+            border-color: var(--accent);
+        }
+        .cs-foot {
+            font-size: 11px;
+            color: var(--text-muted);
+            opacity: 0.8;
+            margin: 6px 2px 0;
+            line-height: 1.4;
         }
 
         table {
@@ -176,7 +224,13 @@
     <div class="date-subtitle">
         <input type="date" id="datePicker" value="{{ date_str }}">
     </div>
+    <div class="period-toggle" id="periodToggle">
+        <button data-period="day" class="active">Day</button>
+        <button data-period="week">Week</button>
+        <button data-period="month">Month</button>
+    </div>
 
+    <div id="dayView">
     <div class="stats-grid" id="statsGrid"></div>
 
     <div class="section">
@@ -193,6 +247,26 @@
         </div>
     </div>
 
+    <div class="section">
+        <h2>Context Switching</h2>
+        <div class="cs-summary" id="csSummary"></div>
+        <div class="cs-grid">
+            <div>
+                <h3 class="chart-subtitle">Starts per task</h3>
+                <div class="chart-container"><canvas id="csTaskChart"></canvas></div>
+                <p class="cs-foot">A “start” = each time you began or returned to a task. Consecutive work on the same task counts once; work intervals under 1 min are ignored.</p>
+            </div>
+            <div>
+                <h3 class="chart-subtitle">Switches by hour</h3>
+                <div class="chart-container"><canvas id="csHourChart"></canvas></div>
+                <p class="cs-foot">A “switch” = moving from one task to a different one (resuming the same task isn’t a switch). Counted by the clock hour you switched into.</p>
+            </div>
+        </div>
+        <h3 class="chart-subtitle">Session timeline</h3>
+        <div class="chart-container" style="height: 130px;"><canvas id="csTimelineChart"></canvas></div>
+        <p class="cs-foot">Each bar is one continuous work session at its real clock time, colored per task. Pausing &amp; resuming the same task with nothing in between stays a single session; intervals under 1 min are dropped. Bars may overlap when multiple tasks ran at once.</p>
+    </div>
+
     <div class="section" id="activeSection" style="display:none;">
         <h2>Active Tasks <span class="active-label">live</span></h2>
         <div class="active-section" id="activeTableContainer"></div>
@@ -207,12 +281,41 @@
         <h2>Insights</h2>
         <div class="insights" id="insights"></div>
     </div>
+    </div><!-- /#dayView -->
+
+    <div id="rangeView" style="display:none;">
+        <div class="cs-summary" id="rangeSummary"></div>
+        <div class="stats-grid" id="rangeStatsGrid"></div>
+
+        <div class="section">
+            <h2>Time tracked per day</h2>
+            <div class="chart-container"><canvas id="rangeTimeChart"></canvas></div>
+            <p class="cs-foot">Sum of elapsed time on tasks completed each day. Days with no completed tasks show as empty.</p>
+        </div>
+
+        <div class="section">
+            <h2>Context switches per day</h2>
+            <div class="chart-container"><canvas id="rangeSwitchChart"></canvas></div>
+            <p class="cs-foot">Daily count of moves between different tasks (resuming the same task isn’t a switch; work intervals under 1 min ignored). Grey hatched bars mark days that had activity but no recorded interval data (before interval tracking existed).</p>
+        </div>
+
+        <div class="section">
+            <h2>Estimation calibration</h2>
+            <div class="chart-container"><canvas id="rangeCalibChart"></canvas></div>
+            <p class="cs-foot">Each point is one completed task: estimated time (x) vs actual elapsed (y). Points on the dashed line were estimated perfectly; above it ran over, below came in under.</p>
+        </div>
+    </div><!-- /#rangeView -->
 
     <div class="refresh-note">Auto-refreshes every 60s</div>
 
     <script>
     let chartInstance = null;
     let timelineChartInstance = null;
+    let csTaskChartInstance = null;
+    let csHourChartInstance = null;
+    let csTimelineChartInstance = null;
+    let currentPeriod = 'day';
+    const rangeCharts = { time: null, switch: null, calib: null };
     let currentSort = { key: 'completed_at', asc: false };
 
     // Date picker (value initialized from server template)
@@ -250,6 +353,7 @@
             { value: `${totalHrs}h`, label: 'Total time', cls: '' },
             { value: pct(stats.avg_accuracy), label: 'Avg accuracy (elapsed/est)', cls: stats.avg_accuracy <= 1.0 ? 'green' : 'red' },
             { value: stats.distractions, label: 'Distractions today', cls: stats.distractions > 5 ? 'red' : 'orange' },
+            { value: stats.deterred, label: 'Deterred today', cls: 'green' },
         ];
         if (stats.ambitious_tasks > 0) {
             cards.push({
@@ -335,7 +439,7 @@
         });
     }
 
-    function renderTimelineChart(tasks, distractions) {
+    function renderTimelineChart(tasks, distractions, deterred) {
         const ctx = document.getElementById('timelineChart').getContext('2d');
         if (timelineChartInstance) timelineChartInstance.destroy();
 
@@ -397,6 +501,18 @@
             return count;
         });
 
+        // Bucket deterred by hour
+        const deterredCounts = hours.map(h => {
+            let count = 0;
+            if (deterred && deterred.timestamps) {
+                for (const ts of deterred.timestamps) {
+                    const hour = parseInt(ts.split(':')[0], 10);
+                    if (hour === h) count++;
+                }
+            }
+            return count;
+        });
+
         timelineChartInstance = new Chart(ctx, {
             type: 'bar',
             data: {
@@ -420,6 +536,18 @@
                         tension: 0.3,
                         pointRadius: distractionCounts.map(c => c > 0 ? 5 : 0),
                         pointBackgroundColor: '#D32F2F',
+                        yAxisID: 'y1',
+                    },
+                    {
+                        label: 'Deterred',
+                        data: deterredCounts,
+                        type: 'line',
+                        borderColor: '#2E7D32',
+                        backgroundColor: 'rgba(46, 125, 50, 0.1)',
+                        fill: true,
+                        tension: 0.3,
+                        pointRadius: deterredCounts.map(c => c > 0 ? 5 : 0),
+                        pointBackgroundColor: '#2E7D32',
                         yAxisID: 'y1',
                     }
                 ]
@@ -565,6 +693,12 @@
             items.push(`${distractions.count} distraction${distractions.count > 1 ? 's' : ''} logged today (${distractions.timestamps.join(', ')}).`);
         }
 
+        // Deterred insight
+        const deterred = window._deterredData;
+        if (deterred && deterred.count > 0) {
+            items.push(`✓ ${deterred.count} distraction${deterred.count > 1 ? 's' : ''} deterred today (${deterred.timestamps.join(', ')}).`);
+        }
+
         // Most overtime task
         if (overtimeTasks.length > 0) {
             const worst = overtimeTasks.reduce((a, b) => a.accuracy > b.accuracy ? a : b);
@@ -585,35 +719,393 @@
         renderTable(_allTasks, 'taskTableContainer', true);
     }
 
+    // Wrap a label into multiple lines (Chart.js renders a string[] as multiline).
+    // Truncates only if longer than maxChars; otherwise word-wraps at maxLineChars.
+    function wrapLabel(text, maxLineChars = 26, maxChars = 60) {
+        if (text.length > maxChars) text = text.slice(0, maxChars - 1) + '…';
+        const lines = [];
+        let cur = '';
+        for (const word of text.split(' ')) {
+            if (cur && (cur.length + 1 + word.length) > maxLineChars) {
+                lines.push(cur);
+                cur = word;
+            } else {
+                cur = cur ? cur + ' ' + word : word;
+            }
+            while (cur.length > maxLineChars) {  // hard-break an over-long word
+                lines.push(cur.slice(0, maxLineChars));
+                cur = cur.slice(maxLineChars);
+            }
+        }
+        if (cur) lines.push(cur);
+        return lines.length ? lines : [''];
+    }
+
+    // Stable color per task name (hash -> hue).
+    function colorForName(name, alpha = 0.85) {
+        let h = 0;
+        for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % 360;
+        return `hsla(${h}, 60%, 60%, ${alpha})`;
+    }
+
+    function renderContextSwitching(context) {
+        const ctx = context || { total_switches: 0, total_sessions: 0, per_task: [], by_hour: [], timeline: [] };
+
+        // Summary line
+        const startTotal = ctx.per_task.reduce((a, t) => a + t.starts, 0);
+        document.getElementById('csSummary').innerHTML =
+            `<b>${ctx.total_switches}</b> context switches today · ` +
+            `${startTotal} starts across ${ctx.per_task.length} tasks ` +
+            `<span style="opacity:.7">(intervals &lt; 1 min ignored)</span>`;
+
+        // 1) Starts per task (horizontal bar) — each session counts as a start
+        const taskCtx = document.getElementById('csTaskChart').getContext('2d');
+        if (csTaskChartInstance) csTaskChartInstance.destroy();
+        if (ctx.per_task.length === 0) {
+            taskCtx.font = '14px -apple-system, sans-serif';
+            taskCtx.fillStyle = '#888';
+            taskCtx.textAlign = 'center';
+            taskCtx.fillText('No qualifying sessions', taskCtx.canvas.width / 2, 120);
+        } else {
+            const labels = ctx.per_task.map(t => t.name);
+            csTaskChartInstance = new Chart(taskCtx, {
+                type: 'bar',
+                data: {
+                    labels,
+                    datasets: [
+                        { label: 'Starts', data: ctx.per_task.map(t => t.starts), backgroundColor: '#90CAF9' },
+                    ],
+                },
+                options: {
+                    indexAxis: 'y',
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: { beginAtZero: true, ticks: { precision: 0 }, title: { display: true, text: 'Starts' } },
+                        y: { ticks: { font: { size: 12 } } },
+                    },
+                },
+            });
+        }
+
+        // 2) Switches by hour (bar), trimmed to the active hour range
+        const hourCtx = document.getElementById('csHourChart').getContext('2d');
+        if (csHourChartInstance) csHourChartInstance.destroy();
+        const byHour = ctx.by_hour || [];
+        const active = byHour.map((v, h) => h).filter(h => byHour[h] > 0);
+        if (active.length === 0) {
+            hourCtx.font = '14px -apple-system, sans-serif';
+            hourCtx.fillStyle = '#888';
+            hourCtx.textAlign = 'center';
+            hourCtx.fillText('No switches', hourCtx.canvas.width / 2, 120);
+        } else {
+            const lo = Math.min(...active), hi = Math.max(...active);
+            const hours = [];
+            for (let h = lo; h <= hi; h++) hours.push(h);
+            csHourChartInstance = new Chart(hourCtx, {
+                type: 'bar',
+                data: {
+                    labels: hours.map(h => `${h}:00`),
+                    datasets: [{ label: 'Switches', data: hours.map(h => byHour[h]), backgroundColor: '#CE93D8' }],
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: { title: { display: true, text: 'Hour of day' } },
+                        y: { beginAtZero: true, ticks: { precision: 0 } },
+                    },
+                },
+            });
+        }
+
+        // 3) Session timeline as a Gantt — floating bars at real clock positions,
+        //    one row per session (handles concurrent/overlapping tasks correctly).
+        const tlCtx = document.getElementById('csTimelineChart').getContext('2d');
+        const tlContainer = tlCtx.canvas.parentElement;
+        if (csTimelineChartInstance) csTimelineChartInstance.destroy();
+        const tl = ctx.timeline || [];
+        const fmtClock = (m) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(Math.floor(m % 60)).padStart(2, '0')}`;
+        if (tl.length === 0) {
+            tlContainer.style.height = '130px';
+            tlCtx.font = '14px -apple-system, sans-serif';
+            tlCtx.fillStyle = '#888';
+            tlCtx.textAlign = 'center';
+            tlCtx.fillText('No sessions to show', tlCtx.canvas.width / 2, 60);
+        } else {
+            const toMin = (iso) => { const d = new Date(iso); return d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60; };
+            const sessions = tl.map((s, i) => ({ s, i, start: toMin(s.start), end: toMin(s.end) }));
+            const labels = sessions.map((x) => wrapLabel(`${x.i + 1}. ${x.s.name}`));
+            // Size rows to fit wrapped label lines (~15px/line + per-row padding).
+            const totalLines = labels.reduce((a, l) => a + l.length, 0);
+            tlContainer.style.height = Math.max(130, totalLines * 15 + tl.length * 10 + 60) + 'px';
+            const lo = Math.min(...sessions.map(x => x.start));
+            const hi = Math.max(...sessions.map(x => x.end));
+            csTimelineChartInstance = new Chart(tlCtx, {
+                type: 'bar',
+                data: {
+                    labels,
+                    datasets: [{
+                        data: sessions.map(x => [x.start, Math.max(x.end, x.start + 0.5)]),
+                        backgroundColor: sessions.map(x => colorForName(x.s.name)),
+                        borderWidth: 0,
+                        barPercentage: 0.7,
+                        _sessions: sessions,
+                    }],
+                },
+                options: {
+                    indexAxis: 'y',
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                title: (items) => sessions[items[0].dataIndex].s.name,
+                                label: (item) => {
+                                    const x = sessions[item.dataIndex];
+                                    return `${fmtClock(x.start)}–${fmtClock(x.end)} (${Math.round(x.end - x.start)}m)`;
+                                },
+                            },
+                        },
+                    },
+                    scales: {
+                        x: {
+                            position: 'top',
+                            min: Math.floor(lo / 60) * 60,
+                            max: Math.ceil(hi / 60) * 60,
+                            ticks: { stepSize: 60, callback: (v) => fmtClock(v) },
+                            title: { display: true, text: 'Time of day' },
+                        },
+                        y: { ticks: { font: { size: 11 } } },
+                    },
+                },
+            });
+        }
+    }
+
+    // Format a YYYY-MM-DD into a compact axis label for the range views.
+    function dayLabel(iso, period) {
+        const [y, m, d] = iso.split('-').map(Number);
+        const dt = new Date(y, m - 1, d);
+        const wd = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][dt.getDay()];
+        return period === 'month' ? String(d) : `${wd} ${d}`;
+    }
+
+    function renderRangeStats(stats) {
+        const grid = document.getElementById('rangeStatsGrid');
+        const totalHrs = (stats.total_elapsed_seconds / 3600).toFixed(1);
+        const cards = [
+            { value: `${totalHrs}h`, label: 'Total time tracked', cls: '' },
+            { value: stats.total_tasks, label: 'Tasks completed', cls: 'blue' },
+            { value: stats.total_switches, label: 'Context switches', cls: 'orange' },
+            { value: pct(stats.avg_accuracy), label: 'Avg accuracy (elapsed/est)', cls: stats.avg_accuracy <= 1.0 ? 'green' : 'red' },
+            { value: stats.distractions, label: 'Distractions', cls: stats.distractions > 5 ? 'red' : 'orange' },
+            { value: stats.active_days, label: 'Active days', cls: '' },
+        ];
+        if (stats.ambitious_tasks > 0) {
+            cards.push({ value: `${stats.ambitious_within}/${stats.ambitious_tasks}`, label: 'Ambitious goals hit', cls: stats.ambitious_rate >= 0.5 ? 'green' : 'red' });
+        }
+        grid.innerHTML = cards.map(c => `
+            <div class="stat-card ${c.cls}">
+                <div class="value">${c.value}</div>
+                <div class="label">${c.label}</div>
+            </div>`).join('');
+    }
+
+    function renderRangeBar(canvasId, instanceKey, daily, period, field, label, color, yTitle) {
+        const ctx = document.getElementById(canvasId).getContext('2d');
+        if (rangeCharts[instanceKey]) rangeCharts[instanceKey].destroy();
+        rangeCharts[instanceKey] = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: daily.map(d => dayLabel(d.date, period)),
+                datasets: [{ label, data: daily.map(d => d[field]), backgroundColor: color }],
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    y: { beginAtZero: true, title: { display: true, text: yTitle } },
+                    x: { ticks: { autoSkip: false, maxRotation: 0, font: { size: 11 } } },
+                },
+            },
+        });
+    }
+
+    function renderRangeSwitches(daily, period) {
+        const ctx = document.getElementById('rangeSwitchChart').getContext('2d');
+        if (rangeCharts.switch) rangeCharts.switch.destroy();
+        const isNA = (v) => v === null || v === undefined;
+        const avail = daily.map(d => d.switches).filter(v => !isNA(v));
+        const maxAvail = Math.max(1, ...avail);  // ghost-bar height for n/a days
+        rangeCharts.switch = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: daily.map(d => dayLabel(d.date, period)),
+                datasets: [
+                    {
+                        label: 'Switches',
+                        data: daily.map(d => isNA(d.switches) ? null : d.switches),
+                        backgroundColor: '#CE93D8',
+                    },
+                    {
+                        label: 'No interval data',
+                        data: daily.map(d => isNA(d.switches) ? maxAvail : null),
+                        backgroundColor: 'rgba(150,150,150,0.16)',
+                        borderColor: 'rgba(150,150,150,0.45)',
+                        borderWidth: 1,
+                        borderDash: [4, 3],
+                    },
+                ],
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: (item) => item.datasetIndex === 1
+                                ? 'Interval data not available'
+                                : `${item.raw} switches`,
+                        },
+                    },
+                },
+                scales: {
+                    y: { stacked: true, beginAtZero: true, title: { display: true, text: 'Switches' } },
+                    x: { stacked: true, ticks: { autoSkip: false, maxRotation: 0, font: { size: 11 } } },
+                },
+            },
+        });
+    }
+
+    function renderRangeCalibration(calibration) {
+        const ctx = document.getElementById('rangeCalibChart').getContext('2d');
+        if (rangeCharts.calib) rangeCharts.calib.destroy();
+        if (!calibration.length) {
+            ctx.font = '14px -apple-system, sans-serif';
+            ctx.fillStyle = '#888';
+            ctx.textAlign = 'center';
+            ctx.fillText('No estimated tasks in range', ctx.canvas.width / 2, 120);
+            rangeCharts.calib = null;
+            return;
+        }
+        const pts = calibration.map(t => ({ x: t.estimated_seconds / 60, y: t.elapsed_seconds / 60, name: t.name, date: t.date }));
+        const maxV = Math.max(...pts.map(p => Math.max(p.x, p.y)), 1) * 1.05;
+        rangeCharts.calib = new Chart(ctx, {
+            type: 'scatter',
+            data: {
+                datasets: [
+                    {
+                        label: 'Tasks',
+                        data: pts,
+                        backgroundColor: pts.map(p => p.y > p.x ? 'rgba(229,115,115,0.75)' : 'rgba(129,199,132,0.8)'),
+                        pointRadius: 5,
+                        pointHoverRadius: 7,
+                    },
+                    {
+                        type: 'line',
+                        label: 'Perfect estimate',
+                        data: [{ x: 0, y: 0 }, { x: maxV, y: maxV }],
+                        borderColor: '#999',
+                        borderDash: [6, 4],
+                        borderWidth: 1.5,
+                        pointRadius: 0,
+                        fill: false,
+                    },
+                ],
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            title: (items) => items[0].raw.name || '',
+                            label: (item) => {
+                                const p = item.raw;
+                                if (p.x === undefined) return '';
+                                return `est ${p.x.toFixed(0)}m → actual ${p.y.toFixed(0)}m (${p.date})`;
+                            },
+                        },
+                    },
+                },
+                scales: {
+                    x: { beginAtZero: true, max: maxV, title: { display: true, text: 'Estimated (min)' } },
+                    y: { beginAtZero: true, max: maxV, title: { display: true, text: 'Actual elapsed (min)' } },
+                },
+            },
+        });
+    }
+
+    function renderRange(data) {
+        document.title = `etime — ${data.period} · ${data.start} → ${data.end}`;
+        const periodLabel = data.period === 'month' ? 'This month' : 'This week';
+        document.getElementById('rangeSummary').innerHTML =
+            `<b>${periodLabel}</b> · ${data.start} → ${data.end}`;
+        renderRangeStats(data.stats);
+        renderRangeBar('rangeTimeChart', 'time', data.daily, data.period, 'hours', 'Hours', '#90CAF9', 'Hours');
+        renderRangeSwitches(data.daily, data.period);
+        renderRangeCalibration(data.calibration);
+    }
+
+    async function fetchAndRenderDay(selectedDate) {
+        const url = selectedDate ? `/api/data?date=${selectedDate}` : '/api/data';
+        const res = await fetch(url);
+        const data = await res.json();
+
+        document.title = `etime dashboard — ${data.date}`;
+        if (datePicker.value !== data.date) datePicker.value = data.date;
+
+        renderStats(data.stats);
+        renderChart(data.tasks);
+        renderTimelineChart(data.tasks, data.distractions, data.deterred);
+        renderContextSwitching(data.context);
+
+        _allTasks = data.tasks;
+        renderTable(data.tasks, 'taskTableContainer', true);
+
+        if (data.active_tasks.length > 0) {
+            document.getElementById('activeSection').style.display = '';
+            renderTable(data.active_tasks, 'activeTableContainer', false);
+        } else {
+            document.getElementById('activeSection').style.display = 'none';
+        }
+
+        window._deterredData = data.deterred;
+        renderInsights(data.stats, data.tasks, data.distractions);
+    }
+
     async function fetchAndRender(selectedDate = null) {
         try {
-            const url = selectedDate ? `/api/data?date=${selectedDate}` : '/api/data';
-            const res = await fetch(url);
-            const data = await res.json();
-
-            document.title = `etime dashboard — ${data.date}`;
-            if (datePicker.value !== data.date) datePicker.value = data.date;
-
-            renderStats(data.stats);
-            renderChart(data.tasks);
-            renderTimelineChart(data.tasks, data.distractions);
-
-            _allTasks = data.tasks;
-            renderTable(data.tasks, 'taskTableContainer', true);
-
-            // Active tasks
-            if (data.active_tasks.length > 0) {
-                document.getElementById('activeSection').style.display = '';
-                renderTable(data.active_tasks, 'activeTableContainer', false);
+            const isDay = currentPeriod === 'day';
+            document.getElementById('dayView').style.display = isDay ? '' : 'none';
+            document.getElementById('rangeView').style.display = isDay ? 'none' : '';
+            if (isDay) {
+                await fetchAndRenderDay(selectedDate);
             } else {
-                document.getElementById('activeSection').style.display = 'none';
+                const q = selectedDate ? `&date=${selectedDate}` : '';
+                const res = await fetch(`/api/range?period=${currentPeriod}${q}`);
+                renderRange(await res.json());
             }
-
-            renderInsights(data.stats, data.tasks, data.distractions);
         } catch (err) {
             console.error('Failed to fetch dashboard data:', err);
         }
     }
+
+    // Period toggle (Day / Week / Month)
+    document.getElementById('periodToggle').addEventListener('click', (e) => {
+        const btn = e.target.closest('button');
+        if (!btn) return;
+        currentPeriod = btn.dataset.period;
+        document.querySelectorAll('#periodToggle button').forEach(b => b.classList.toggle('active', b === btn));
+        fetchAndRender(datePicker.value);
+    });
 
     // Initial load
     fetchAndRender(datePicker.value);

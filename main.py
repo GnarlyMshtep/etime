@@ -2,6 +2,8 @@
 """etime - Evolved Timer for productivity tracking."""
 
 import sys
+from collections import deque
+from dataclasses import dataclass
 from datetime import datetime
 from PyQt6.QtWidgets import QApplication, QMessageBox, QDialog, QVBoxLayout, QLabel
 from PyQt6.QtCore import QObject, QTimer, Qt
@@ -13,11 +15,37 @@ import objc
 from models import Task, TaskState
 from typing import Optional
 from storage import ensure_etime_dir, load_active_tasks, save_active_tasks, append_to_history, remove_last_from_history
+
+
+# Maximum number of undoable actions retained.
+UNDO_BUFFER_SIZE = 5
+
+
+@dataclass
+class UndoAction:
+    """A single undoable action, stored on the undo stack (most recent last).
+
+    kind:
+        "create"   — task was created; undo removes it.
+        "complete" — task was completed; undo restores it to its original spot.
+    anchor_before_id:
+        ID of the task that was immediately before this one in ``self.tasks`` at
+        action time (None if it was first). Used to restore the *exact original
+        list position* on undo, robust to other tasks shifting around.
+    fallback_index:
+        Absolute index in ``self.tasks`` at action time, used only if the anchor
+        task is no longer present.
+    """
+    kind: str
+    task: Task
+    anchor_before_id: Optional[str] = None
+    fallback_index: int = -1
 from timer_engine import TimerEngine
 from overlay import OverlayWindow
 from task_dialog import TaskDialog
+from search_dialog import SearchDialog
 from hotkeys import HotkeyManager
-from config import KEY_N, KEY_P, KEY_C, KEY_Q, KEY_S, KEY_U, KEY_H, KEY_T, KEY_UP, KEY_DOWN, KEY_A, KEY_LEFT, KEY_RIGHT
+from config import KEY_N, KEY_P, KEY_C, KEY_Q, KEY_S, KEY_U, KEY_H, KEY_T, KEY_F, KEY_UP, KEY_DOWN, KEY_A, KEY_LEFT, KEY_RIGHT, KEY_G, KEY_SLASH, DETERRED_FILE
 from sounds import play_alarm_loop, stop_alarm, play_success_sound, play_ambitious_success_sound
 import dashboard
 
@@ -61,11 +89,13 @@ class HelpDialog(QDialog):
             ("⌃⌥⌘N", "New task"),
             ("⌃⌥⌘P", "Toggle start / pause"),
             ("⌃⌥⌘C", "Complete focused task"),
-            ("⌃⌥⌘U", "Undo last completion"),
+            ("⌃⌥⌘U", "Undo (last 5 actions)"),
             ("⌃⌥⌘Q", "Dismiss alarm"),
             ("⌃⌥⌘S", "Toggle overlay visibility"),
-            ("⌃⌥⌘H", "Show this help"),
+            ("⌃⌥⌘H", "Toggle this help"),
+            ("⌃⌥⌘/", "Search tasks & jump"),
             ("⌃⌥⌘T", "Toggle subtask (of task above)"),
+            ("⌃⌥⌘F", "Fold / unfold subtasks"),
             ("⌃⌥⌘A", "Toggle show all (stashed tasks)"),
             ("⇧⌃⌥⌘→", "Stash focused task"),
             ("⇧⌃⌥⌘←", "Unstash focused task"),
@@ -98,11 +128,12 @@ class AppController(QObject):
         self.overlay_visible = True  # Track overlay visibility
         self.active_alarms = set()  # Track which tasks have active alarms
         self.previous_app = None  # Track previously focused app for focus restoration
-        self.last_completed_task: Optional[Task] = None  # For undo completion
-        self.last_completed_index: int = -1  # Original position for undo completion
-        self.last_created_task: Optional[Task] = None  # For undo creation
+        # Undo stack of recent actions (most recent last), capped at UNDO_BUFFER_SIZE.
+        self.undo_stack: deque[UndoAction] = deque(maxlen=UNDO_BUFFER_SIZE)
         self._auto_paused_tasks: set = set()  # Task IDs paused due to sleep
         self.show_all_mode: bool = False  # Toggle visibility of stashed tasks
+        # Text captured when a creation is undone, restored into the next dialog.
+        self._pending_prefill: Optional[dict] = None
 
         # Initialize
         self._initialize()
@@ -142,9 +173,12 @@ class AppController(QObject):
         self.hotkey_manager.register(KEY_U, self.undo)
         self.hotkey_manager.register(KEY_H, self.show_help)
         self.hotkey_manager.register(KEY_T, self.toggle_subtask)
+        self.hotkey_manager.register(KEY_F, self.toggle_collapse)
         self.hotkey_manager.register(KEY_RIGHT, self.stash_task, shift=True)
         self.hotkey_manager.register(KEY_LEFT, self.unstash_task, shift=True)
         self.hotkey_manager.register(KEY_A, self.toggle_show_all)
+        self.hotkey_manager.register(KEY_G, self.log_deterred)
+        self.hotkey_manager.register(KEY_SLASH, self.open_search)
 
         if not self.hotkey_manager.start():
             # Show error dialog if hotkeys fail
@@ -165,6 +199,10 @@ class AppController(QObject):
 
         # Setup help dialog (kept as instance to prevent GC)
         self.help_dialog = HelpDialog()
+
+        # Setup search dialog (kept as instance to prevent GC)
+        self.search_dialog = SearchDialog()
+        self.search_dialog.task_selected.connect(self._on_search_selected)
 
         # Setup sleep/wake observer
         self._sleep_observer = SleepObserver.alloc().init()
@@ -219,6 +257,11 @@ class AppController(QObject):
 
         self.task_dialog.reset()
 
+        # Provide all active tasks so a manually-typed parent name can resolve.
+        self.task_dialog.set_available_parents(
+            [(t.name, t.id) for t in self.tasks]
+        )
+
         # Pass focused task as potential parent for subtask checkbox
         focused = self.overlay.get_focused_task()
         if focused:
@@ -226,10 +269,28 @@ class AppController(QObject):
                 parent_name=focused.name, parent_task_id=focused.id
             )
 
+        # Restore any text stashed by undoing a creation (see _undo_creation).
+        if self._pending_prefill is not None:
+            self.task_dialog.prefill(**self._pending_prefill)
+            self._pending_prefill = None
+
         self.task_dialog.show()
         self.task_dialog.raise_()  # Bring to front
         self.task_dialog.activateWindow()  # Activate and focus
         self.task_dialog.name_input.setFocus()  # Ensure name field has focus
+
+    def _unfold_ancestors(self, task: Task) -> None:
+        """Un-collapse every ancestor of ``task`` so the task is not folded away."""
+        by_id = {t.id: t for t in self.tasks}
+        seen: set = set()
+        cur = task
+        while cur.parent_task_id and cur.parent_task_id in by_id:
+            if cur.parent_task_id in seen:
+                break
+            seen.add(cur.parent_task_id)
+            parent = by_id[cur.parent_task_id]
+            parent.is_collapsed = False
+            cur = parent
 
     def _on_task_submitted(self, name: str, minutes: int, ambitious_minutes: int, parent_task_id: str):
         """Handle task submission from dialog."""
@@ -262,7 +323,11 @@ class AppController(QObject):
                        and self.tasks[insert_idx].parent_task_id == parent_task_id):
                     insert_idx += 1
                 self.tasks.insert(insert_idx, task)
-                self.overlay.insert_task(task, insert_idx)
+                # If the parent (or any ancestor) is folded, unfold the chain so
+                # the new subtask appears inside its section in the right spot
+                # instead of getting stranded at the bottom.
+                self._unfold_ancestors(task)
+                self.overlay.sync_visible_widgets()
                 new_index = insert_idx
             else:
                 # Parent not found, append at end
@@ -294,8 +359,7 @@ class AppController(QObject):
             print("Overlay shown for new task")
 
         # Track for undo
-        self.last_created_task = task
-        self.last_completed_task = None  # New action clears old undo
+        self.undo_stack.append(UndoAction(kind="create", task=task))
 
         # Save
         save_active_tasks(self.tasks)
@@ -383,9 +447,12 @@ class AppController(QObject):
 
         print(f"Completing task: {task.name}")
 
-        # Get task_id and index early (for undo)
+        # Get task_id and full-list position early (for undo). We anchor to the
+        # task immediately before this one so undo restores the exact original
+        # position even if other tasks have shifted.
         task_id = task.id
-        task_index = self.overlay.focused_index
+        full_index = self.tasks.index(task)
+        anchor_before_id = self.tasks[full_index - 1].id if full_index > 0 else None
 
         # Check if this task has an active alarm - auto-quiet it
         had_alarm = task_id in self.active_alarms
@@ -399,9 +466,12 @@ class AppController(QObject):
                 print("All alarms cleared - sound stopped")
 
         # Save state for undo (before modifying)
-        self.last_completed_task = task
-        self.last_completed_index = task_index
-        self.last_created_task = None  # New action clears old undo
+        self.undo_stack.append(UndoAction(
+            kind="complete",
+            task=task,
+            anchor_before_id=anchor_before_id,
+            fallback_index=full_index,
+        ))
 
         task.end_interval()
 
@@ -480,18 +550,54 @@ class AppController(QObject):
             print("Overlay shown")
 
     def undo(self):
-        """Undo the last action (task creation or completion)."""
-        if self.last_created_task is not None:
-            self._undo_creation()
-        elif self.last_completed_task is not None:
-            self._undo_completion()
-        else:
-            print("Nothing to undo")
+        """Undo the most recent action (creation or completion), LIFO.
 
-    def _undo_creation(self):
-        """Undo the last task creation — removes the task entirely."""
-        task = self.last_created_task
+        Up to UNDO_BUFFER_SIZE actions can be undone in reverse order.
+        """
+        if not self.undo_stack:
+            print("Nothing to undo")
+            return
+
+        action = self.undo_stack.pop()
+        if action.kind == "create":
+            self._undo_creation(action)
+        elif action.kind == "complete":
+            self._undo_completion(action)
+        else:
+            print(f"Unknown undo action kind: {action.kind}")
+
+    def _reinsertion_index(self, action: UndoAction) -> int:
+        """Compute the index in self.tasks to restore a task to its original spot.
+
+        Prefers inserting right after the anchor task (the task it originally
+        followed); falls back to the stored absolute index if the anchor is gone.
+        """
+        if action.anchor_before_id is not None:
+            anchor_idx = next(
+                (i for i, t in enumerate(self.tasks) if t.id == action.anchor_before_id),
+                None,
+            )
+            if anchor_idx is not None:
+                return anchor_idx + 1
+        # No anchor stored (was first task) or anchor no longer present:
+        # fall back to the absolute index, clamped to the current list.
+        return min(max(action.fallback_index, 0), len(self.tasks))
+
+    def _undo_creation(self, action: UndoAction):
+        """Undo a task creation — removes the task and restores its text.
+
+        The name/time/ambitious the user typed are stashed so the next New Task
+        dialog (which we reopen immediately) comes back pre-filled for editing.
+        """
+        task = action.task
         print(f"Undoing creation of: {task.name}")
+
+        # Stash the typed values to restore into the reopened dialog.
+        self._pending_prefill = {
+            "name": task.name,
+            "minutes": max(1, task.estimated_seconds // 60),
+            "ambitious_minutes": (task.ambitious_seconds // 60) if task.ambitious_seconds else 0,
+        }
 
         # End any open interval
         if task.work_intervals and task.work_intervals[-1]["end"] is None:
@@ -511,17 +617,22 @@ class AppController(QObject):
         self.overlay.update_display()
 
         save_active_tasks(self.tasks)
-        self.last_created_task = None
         print(f"Task '{task.name}' removed")
 
-    def _undo_completion(self):
-        """Undo the last task completion — restores the task."""
-        task = self.last_completed_task
+        # Reopen the dialog so the restored text is right there to re-edit.
+        self.new_task()
+
+    def _undo_completion(self, action: UndoAction):
+        """Undo a task completion — restores the task to its original position."""
+        task = action.task
         print(f"Undoing completion of: {task.name}")
 
-        # Remove from history
+        # Remove from history. Completions append to history.jsonl in order and
+        # the undo stack pops LIFO, so the matching entry is always the last line.
         if not remove_last_from_history(task.id):
             print("Failed to remove from history - undo aborted")
+            # Put the action back so the user can retry / undo something else.
+            self.undo_stack.append(action)
             return
 
         # Restore task state
@@ -529,11 +640,11 @@ class AppController(QObject):
         task.completed_at = None
         task.start_interval()
 
-        # Re-insert at original position (or end if index is now invalid)
-        insert_index = min(self.last_completed_index, len(self.tasks))
+        # Re-insert at original position (anchored to the task it followed).
+        insert_index = self._reinsertion_index(action)
         self.tasks.insert(insert_index, task)
 
-        # Re-add to overlay
+        # Re-add to overlay (insert_task derives the visible layout slot by id).
         self.overlay.insert_task(task, insert_index)
 
         # Set focus to restored task (convert to visible index)
@@ -547,10 +658,6 @@ class AppController(QObject):
 
         # Save active tasks
         save_active_tasks(self.tasks)
-
-        # Clear undo state
-        self.last_completed_task = None
-        self.last_completed_index = -1
 
         print(f"Task '{task.name}' restored")
 
@@ -578,6 +685,27 @@ class AppController(QObject):
 
         save_active_tasks(self.tasks)
         self.overlay.update_display()
+
+    def toggle_collapse(self):
+        """Fold/unfold the focused task's subtree (⌃⌥⌘F).
+
+        Only meaningful for a task that has subtasks; folding hides its whole
+        descendant subtree from the overlay. Focus stays on the parent task.
+        """
+        task = self.overlay.get_focused_task()
+        if not task:
+            print("No task focused")
+            return
+
+        if not self.overlay._has_children(task):
+            print("No subtasks to fold")
+            return
+
+        # Overlay flips is_collapsed and animates only the affected subtree.
+        self.overlay.toggle_collapse(task)
+        print(f"{'Folded' if task.is_collapsed else 'Unfolded'} subtasks of '{task.name}'")
+
+        save_active_tasks(self.tasks)
 
     def stash_task(self):
         """Stash the focused task — hide from default view. Only paused tasks can be stashed."""
@@ -629,6 +757,14 @@ class AppController(QObject):
         self.overlay.rebuild_widgets()
         print(f"Show all: {self.show_all_mode}")
 
+    def log_deterred(self):
+        """Log a deterred distraction (⌃⌥⌘G)."""
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        DETERRED_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(DETERRED_FILE, "a") as f:
+            f.write(timestamp + "\n")
+        print(f"Deterred distraction logged: {timestamp}")
+
     def _on_sleep(self):
         """Pause all ongoing tasks when Mac goes to sleep."""
         print("System going to sleep — auto-pausing tasks")
@@ -672,6 +808,52 @@ class AppController(QObject):
             save_active_tasks(self.tasks)
             self.overlay.update_display()
             print(f"Resumed {resumed} auto-paused task(s)")
+
+    def open_search(self):
+        """Open the centered task-search popup (⌃⌥⌘/)."""
+        if not self.tasks:
+            print("No tasks to search")
+            return
+        self.previous_app = NSWorkspace.sharedWorkspace().frontmostApplication()
+        self.search_dialog.set_tasks(self.tasks)
+        self.search_dialog.show()
+        self.search_dialog.raise_()
+        self.search_dialog.activateWindow()
+        self.search_dialog.search_input.setFocus()
+
+    def _on_search_selected(self, task_id: str):
+        """Jump to a task chosen in the search popup.
+
+        Unfolds any collapsed ancestor sections (and reveals the task if it was
+        stashed) so the selected task becomes visible and focused.
+        """
+        task = next((t for t in self.tasks if t.id == task_id), None)
+        if task is None:
+            print(f"Search selected unknown task {task_id}")
+            return
+
+        # Unfold collapsed ancestors so the task isn't folded away.
+        self._unfold_ancestors(task)
+
+        # If the task itself is stashed and hidden, switch to show-all so it shows.
+        if task.is_stashed and not self.show_all_mode:
+            self.show_all_mode = True
+            self.overlay.show_all = True
+
+        # Rebuild so section-header state, stash visibility, and widgets are all
+        # consistent, then focus the (now-visible) task.
+        self.overlay.rebuild_widgets()
+        visible = self.overlay._visible_tasks()
+        idx = next((i for i, t in enumerate(visible) if t.id == task_id), None)
+        if idx is not None:
+            self.overlay.focused_index = idx
+        self.overlay.update_display()
+        save_active_tasks(self.tasks)
+
+        # Restore focus to the app the user was in before searching.
+        if self.previous_app:
+            self.previous_app.activateWithOptions_(1)
+            self.previous_app = None
 
     def show_help(self):
         """Toggle the hotkey help dialog."""

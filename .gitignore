@@ -42,3 +42,10 @@ ENV/
 *.spec
 
 # Local data (user's tasks are in ~/.etime/)
+
+# Claude working dirs
+claude_data/
+claude_plots/
+claude_scripts/
+claude_state/
+tmp/

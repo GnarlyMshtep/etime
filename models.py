@@ -33,6 +33,7 @@ class Task:
     work_intervals: List[dict] = field(default_factory=list)  # [{"start": ISO, "end": ISO|None}]
     parent_task_id: Optional[str] = None  # ID of parent task (for subtasks)
     is_stashed: bool = False  # Hidden from default view but not completed
+    is_collapsed: bool = False  # When True, this task's subtree is folded (hidden) in the overlay
 
     def __post_init__(self):
         """Auto-generate ID and timestamp if not provided."""
@@ -85,4 +86,6 @@ class Task:
             d['parent_task_id'] = None
         if 'is_stashed' not in d:
             d['is_stashed'] = False
+        if 'is_collapsed' not in d:
+            d['is_collapsed'] = False
         return cls(**d)

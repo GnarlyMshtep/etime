@@ -118,6 +118,9 @@ class TaskDialog(QDialog):
         self.parent_container.setLayout(self.parent_layout)
         self.parent_container.setVisible(False)
         self._parent_task_id = ""
+        self._parent_name = ""  # Name pre-filled for the context parent
+        # (name, id) of every active task, so a manually-typed parent resolves.
+        self._available_parents: list[tuple[str, str]] = []
         layout.addWidget(self.parent_container)
 
         # Error label (hidden by default)
@@ -205,8 +208,30 @@ class TaskDialog(QDialog):
 
         self.error_label.setVisible(False)
 
-        # Determine parent task ID (non-empty parent field = subtask)
-        parent_id = self._parent_task_id if self.parent_input.text().strip() else ""
+        # Determine parent task ID. An empty field = top-level task. If the text
+        # is unchanged from the pre-filled context parent, use that id directly;
+        # otherwise resolve the typed name against the active task list.
+        parent_text = self.parent_input.text().strip()
+        if not parent_text:
+            parent_id = ""
+        elif parent_text == self._parent_name and self._parent_task_id:
+            parent_id = self._parent_task_id
+        else:
+            matches = [
+                tid for (nm, tid) in self._available_parents
+                if nm.strip().lower() == parent_text.lower()
+            ]
+            if len(matches) == 0:
+                self.error_label.setText(f"No active task named '{parent_text}'")
+                self.error_label.setVisible(True)
+                print(f"ERROR: No parent task named '{parent_text}'")
+                return
+            if len(matches) > 1:
+                self.error_label.setText(f"'{parent_text}' matches multiple tasks")
+                self.error_label.setVisible(True)
+                print(f"ERROR: Ambiguous parent name '{parent_text}'")
+                return
+            parent_id = matches[0]
         print(f"TaskDialog submitting: name='{name}', minutes={minutes}, ambitious={ambitious_minutes}, parent={parent_id or 'none'}")
 
         # Emit signal (ambitious_minutes=0 means None, parent_id="" means top-level)
@@ -219,12 +244,24 @@ class TaskDialog(QDialog):
     def set_parent_context(self, parent_name: str, parent_task_id: str) -> None:
         """Set the parent task context for the subtask field."""
         self._parent_task_id = parent_task_id
+        self._parent_name = parent_name or ""
         if parent_name and parent_task_id:
             self.parent_input.setText(parent_name)
             self.parent_container.setVisible(True)
         else:
             self.parent_container.setVisible(False)
             self._parent_task_id = ""
+            self._parent_name = ""
+
+    def set_available_parents(self, parents: list[tuple[str, str]]) -> None:
+        """Provide (name, id) of active tasks so a typed parent name resolves."""
+        self._available_parents = parents
+
+    def prefill(self, name: str, minutes: int, ambitious_minutes: int) -> None:
+        """Pre-fill the fields (e.g. to restore text after undoing a creation)."""
+        self.name_input.setText(name)
+        self.time_input.setValue(minutes)
+        self.ambitious_input.setText(str(ambitious_minutes) if ambitious_minutes > 0 else "")
 
     def reset(self):
         """Reset dialog to default state."""
@@ -235,3 +272,5 @@ class TaskDialog(QDialog):
         self.parent_input.clear()
         self.parent_container.setVisible(False)
         self._parent_task_id = ""
+        self._parent_name = ""
+        self._available_parents = []

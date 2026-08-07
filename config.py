@@ -50,6 +50,7 @@ MAX_TASK_MINUTES = 999
 DASHBOARD_PORT = 5173
 DASHBOARD_PID_FILE = ETIME_DIR / "dashboard.pid"
 DISTRACTION_FILE = Path.home() / "Dev" / "DistractionCount" / "distraction_count.txt"
+DETERRED_FILE = Path.home() / "Dev" / "DistractionCount" / "deterred_count.txt"
 
 # Hotkey definitions (macOS virtual key codes)
 KEY_N = 45    # N key - New task
@@ -60,8 +61,11 @@ KEY_S = 1     # S key - Minimize/show overlay
 KEY_U = 32    # U key - Undo complete
 KEY_H = 4     # H key - Help menu
 KEY_T = 17    # T key - Toggle subtask
+KEY_F = 3     # F key - Fold/unfold subtasks of focused task
 KEY_UP = 126  # Up arrow - Focus up
 KEY_DOWN = 125  # Down arrow - Focus down
 KEY_A = 0       # A key - Toggle show all (stashed tasks)
 KEY_LEFT = 123  # Left arrow - Unstash (with Shift)
 KEY_RIGHT = 124 # Right arrow - Stash (with Shift)
+KEY_G = 5       # G key - Log deterred distraction
+KEY_SLASH = 44  # / key - Search tasks

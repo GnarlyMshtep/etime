@@ -1,9 +1,10 @@
 """Flask dashboard server for etime."""
 
 import argparse
+import calendar
 import json
 import os
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -14,6 +15,7 @@ ETIME_DIR = Path.home() / ".etime"
 HISTORY_FILE = ETIME_DIR / "history.jsonl"
 ACTIVE_FILE = ETIME_DIR / "active.json"
 DISTRACTION_FILE = Path.home() / "Dev" / "DistractionCount" / "distraction_count.txt"
+DETERRED_FILE = Path.home() / "Dev" / "DistractionCount" / "deterred_count.txt"
 
 app = Flask(__name__)
 
@@ -88,7 +90,31 @@ def _load_distractions(target: date) -> dict:
     return {"count": len(timestamps), "timestamps": timestamps}
 
 
-def _compute_stats(tasks: list[dict], distractions: dict) -> dict:
+def _load_deterred(target: date) -> dict:
+    """Load deterred distraction timestamps for the target date."""
+    if not DETERRED_FILE.exists():
+        return {"count": 0, "timestamps": []}
+
+    timestamps = []
+    try:
+        with open(DETERRED_FILE, "r") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    dt = datetime.strptime(line, "%Y-%m-%d %H:%M:%S")
+                    if dt.date() == target:
+                        timestamps.append(dt.strftime("%H:%M:%S"))
+                except ValueError:
+                    continue
+    except OSError:
+        pass
+
+    return {"count": len(timestamps), "timestamps": timestamps}
+
+
+def _compute_stats(tasks: list[dict], distractions: dict, deterred: dict | None = None) -> dict:
     """Compute summary statistics from a list of completed tasks."""
     total_tasks = len(tasks)
     total_elapsed = sum(t.get("elapsed_seconds", 0) for t in tasks)
@@ -121,6 +147,7 @@ def _compute_stats(tasks: list[dict], distractions: dict) -> dict:
             len(ambitious_within) / len(ambitious_tasks), 3
         ) if ambitious_tasks else 0,
         "distractions": distractions["count"],
+        "deterred": deterred["count"] if deterred else 0,
     }
 
 
@@ -145,6 +172,122 @@ def _format_task_for_api(t: dict) -> dict:
         "work_intervals": t.get("work_intervals", []),
         "parent_task_id": t.get("parent_task_id"),
         "id": t.get("id", ""),
+    }
+
+
+def _interval_bounds(iv: dict) -> Optional[tuple[datetime, datetime]]:
+    """Parse a work interval into (start, end) datetimes.
+
+    Open intervals (end is None, i.e. currently running) are closed at now.
+    Returns None if the interval is malformed or end precedes start.
+    """
+    try:
+        start = datetime.fromisoformat(iv["start"])
+    except (ValueError, TypeError, KeyError):
+        return None
+    end_raw = iv.get("end")
+    if end_raw:
+        try:
+            end = datetime.fromisoformat(end_raw)
+        except (ValueError, TypeError):
+            return None
+    else:
+        end = datetime.now()
+    if end < start:
+        return None
+    return start, end
+
+
+def _day_has_intervals(day_tasks: list[dict], active: list[dict], target: date) -> bool:
+    """Whether any task has a work interval starting on ``target``.
+
+    Used to distinguish a real 0 context switches from "no interval data".
+    """
+    for t in list(day_tasks) + list(active):
+        for iv in t.get("work_intervals", []):
+            bounds = _interval_bounds(iv)
+            if bounds and bounds[0].date() == target:
+                return True
+    return False
+
+
+def _compute_context_switching(
+    day_tasks: list[dict],
+    active: list[dict],
+    target: date,
+    min_seconds: int = 60,
+) -> dict:
+    """Compute context-switching metrics from work intervals.
+
+    A "session" is a maximal run of consecutive intervals on the same task in the
+    global time-ordered stream, so pausing and resuming the same task with nothing
+    else in between is NOT a switch. Intervals shorter than ``min_seconds`` are
+    dropped (sub-minute starts/resumes don't count). A "context switch" is a
+    boundary between two adjacent sessions (which are always different tasks).
+    """
+    # Pool qualifying intervals across completed + active tasks for the target day.
+    intervals: list[tuple[datetime, datetime, str, str]] = []
+    for t in list(day_tasks) + list(active):
+        name = t.get("name", "")
+        tid = t.get("id", "") or name
+        for iv in t.get("work_intervals", []):
+            bounds = _interval_bounds(iv)
+            if bounds is None:
+                continue
+            start, end = bounds
+            if start.date() != target:
+                continue
+            if (end - start).total_seconds() < min_seconds:
+                continue
+            intervals.append((start, end, tid, name))
+
+    intervals.sort(key=lambda x: x[0])
+
+    # Merge consecutive same-task intervals into sessions.
+    sessions: list[dict] = []
+    for start, end, tid, name in intervals:
+        if sessions and sessions[-1]["task_id"] == tid:
+            # Extend the current session (max guards against nested/overlapping intervals).
+            sessions[-1]["end"] = max(sessions[-1]["end"], end)
+        else:
+            sessions.append({"task_id": tid, "name": name, "start": start, "end": end})
+
+    total_switches = max(0, len(sessions) - 1)
+
+    # Per-task: each session is a "start" (starting or returning to the task).
+    per_task: dict[str, dict] = {}
+    for s in sessions:
+        rec = per_task.setdefault(s["task_id"], {"name": s["name"], "sessions": 0})
+        rec["sessions"] += 1
+    per_task_list = [
+        {"name": rec["name"], "starts": rec["sessions"]}
+        for rec in per_task.values()
+    ]
+    per_task_list.sort(key=lambda r: r["starts"], reverse=True)
+
+    # Switches by hour: attribute each switch to the hour of the session entered.
+    by_hour = [0] * 24
+    for i in range(1, len(sessions)):
+        by_hour[sessions[i]["start"].hour] += 1
+
+    # Timeline ribbon: each session as a labeled block.
+    timeline = [
+        {
+            "name": s["name"],
+            "task_id": s["task_id"],
+            "start": s["start"].isoformat(),
+            "end": s["end"].isoformat(),
+            "minutes": round((s["end"] - s["start"]).total_seconds() / 60, 1),
+        }
+        for s in sessions
+    ]
+
+    return {
+        "total_switches": total_switches,
+        "total_sessions": len(sessions),
+        "per_task": per_task_list,
+        "by_hour": by_hour,
+        "timeline": timeline,
     }
 
 
@@ -178,7 +321,9 @@ def api_data():
     day_tasks = _filter_by_date(history, target)
     active = _load_active()
     distractions = _load_distractions(target)
-    stats = _compute_stats(day_tasks, distractions)
+    deterred = _load_deterred(target)
+    stats = _compute_stats(day_tasks, distractions, deterred=deterred)
+    context = _compute_context_switching(day_tasks, active, target)
 
     return jsonify({
         "date": target.isoformat(),
@@ -186,6 +331,94 @@ def api_data():
         "tasks": [_format_task_for_api(t) for t in day_tasks],
         "active_tasks": [_format_task_for_api(t) for t in active],
         "distractions": distractions,
+        "deterred": deterred,
+        "context": context,
+    })
+
+
+def _range_dates(anchor: date, period: str) -> list[date]:
+    """Return the list of dates in the period containing ``anchor``.
+
+    week  -> Monday..Sunday containing anchor.
+    month -> 1st..last day of anchor's calendar month.
+    """
+    if period == "month":
+        start = anchor.replace(day=1)
+        n = calendar.monthrange(anchor.year, anchor.month)[1]
+        return [start + timedelta(days=i) for i in range(n)]
+    start = anchor - timedelta(days=anchor.weekday())  # Monday
+    return [start + timedelta(days=i) for i in range(7)]
+
+
+@app.route("/api/range")
+def api_range():
+    """Aggregate stats across a week or month for the global view."""
+    period = request.args.get("period", "week")
+    if period not in ("week", "month"):
+        period = "week"
+
+    date_param = request.args.get("date")
+    if date_param:
+        try:
+            anchor = date.fromisoformat(date_param)
+        except ValueError:
+            anchor = _date_filter or date.today()
+    else:
+        anchor = _date_filter or date.today()
+
+    dates = _range_dates(anchor, period)
+    history = _load_history()
+    active = _load_active()
+
+    daily: list[dict] = []
+    all_tasks: list[dict] = []
+    total_switches = 0
+    for d in dates:
+        day_tasks = _filter_by_date(history, d)
+        # Context switches need recorded work intervals. If the day had task
+        # activity but no interval data (e.g. before interval tracking existed),
+        # report None ("not available") rather than a misleading 0.
+        if _day_has_intervals(day_tasks, active, d):
+            switches = _compute_context_switching(day_tasks, active, d)["total_switches"]
+            total_switches += switches
+        elif day_tasks:
+            switches = None
+        else:
+            switches = 0
+        elapsed = sum(t.get("elapsed_seconds", 0) for t in day_tasks)
+        daily.append({
+            "date": d.isoformat(),
+            "hours": round(elapsed / 3600, 2),
+            "switches": switches,
+            "tasks": len(day_tasks),
+        })
+        all_tasks.extend(day_tasks)
+
+    distractions_total = sum(_load_distractions(d)["count"] for d in dates)
+    deterred_total = sum(_load_deterred(d)["count"] for d in dates)
+    stats = _compute_stats(all_tasks, {"count": distractions_total}, {"count": deterred_total})
+    stats["total_switches"] = total_switches
+    stats["active_days"] = sum(1 for day in daily if day["tasks"] > 0)
+
+    calibration = [
+        {
+            "name": t.get("name", ""),
+            "estimated_seconds": t.get("estimated_seconds", 0),
+            "elapsed_seconds": round(t.get("elapsed_seconds", 0), 1),
+            "date": (t.get("completed_at") or t.get("created_at", ""))[:10],
+            "overtime": t.get("elapsed_seconds", 0) > t.get("estimated_seconds", 0),
+        }
+        for t in all_tasks
+        if t.get("estimated_seconds", 0) > 0
+    ]
+
+    return jsonify({
+        "period": period,
+        "start": dates[0].isoformat(),
+        "end": dates[-1].isoformat(),
+        "stats": stats,
+        "daily": daily,
+        "calibration": calibration,
     })
 
 

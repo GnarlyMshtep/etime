@@ -1,39 +1,29 @@
-"""Global hotkey registration using Quartz event tap."""
+"""Global hotkey registration using NSEvent global monitor."""
 
-import sys
-import time
 from typing import Dict, Callable
-import Quartz
-from Quartz import (
-    CGEventTapCreate, kCGSessionEventTap, kCGHeadInsertEventTap,
-    kCGEventTapOptionDefault, CGEventTapEnable, CGEventTapIsEnabled,
-    CFMachPortCreateRunLoopSource, CFRunLoopGetCurrent,
-    CFRunLoopAddSource, CFRunLoopRemoveSource, kCFRunLoopCommonModes,
-    CGEventGetIntegerValueField, kCGKeyboardEventKeycode,
-    CGEventGetFlags, CGEventMaskBit, kCGEventKeyDown,
-    kCGEventFlagMaskControl, kCGEventFlagMaskAlternate, kCGEventFlagMaskCommand,
-    kCGEventFlagMaskShift,
-    kCGEventTapDisabledByTimeout, kCGEventTapDisabledByUserInput
-)
+from AppKit import NSEvent, NSKeyDownMask
 from ApplicationServices import AXIsProcessTrusted
 
+# Modifier flag masks (from NSEvent)
+NSControlKeyMask = 1 << 18
+NSAlternateKeyMask = 1 << 19
+NSCommandKeyMask = 1 << 20
+NSShiftKeyMask = 1 << 17
+
 # Required modifiers: Control + Option + Command
-HOTKEY_MODIFIERS = (
-    kCGEventFlagMaskControl |
-    kCGEventFlagMaskAlternate |
-    kCGEventFlagMaskCommand
-)
+HOTKEY_MODIFIERS = NSControlKeyMask | NSAlternateKeyMask | NSCommandKeyMask
 
 
 class HotkeyManager:
-    """Manages global hotkey registration and handling."""
+    """Manages global hotkey registration and handling via NSEvent."""
 
     def __init__(self):
         """Initialize hotkey manager."""
         self.callbacks: Dict[tuple[int, bool], Callable] = {}
-        self.tap = None
-        self.run_loop_source = None
-        self._health_check_count: int = 0
+        self._monitor = None
+        # Local monitor fires for etime's OWN windows (the global monitor never
+        # does), so hotkeys still work when an etime window is frontmost.
+        self._local_monitor = None
 
     def register(self, keycode: int, callback: Callable, shift: bool = False) -> None:
         """
@@ -53,195 +43,96 @@ class HotkeyManager:
         Returns:
             True if successful, False if accessibility permissions not granted.
         """
-        # Check accessibility permissions
         if not AXIsProcessTrusted():
             print("Error: Accessibility permissions not granted.")
             print("Please enable etime in System Settings → Privacy & Security → Accessibility")
             return False
 
-        import time
-        for attempt in range(3):
-            if self._create_tap():
-                print(f"Hotkey manager started successfully (attempt {attempt + 1})")
-                return True
-            print(f"Event tap creation failed (attempt {attempt + 1}/3), retrying...")
-            time.sleep(1)
-
-        print("ERROR: All event tap creation attempts failed")
-        return False
-
-    def _create_tap(self) -> bool:
-        """Create and enable the event tap. Returns True on success."""
-        # Clean up any existing tap first
-        if self.run_loop_source:
-            try:
-                CFRunLoopRemoveSource(
-                    CFRunLoopGetCurrent(),
-                    self.run_loop_source,
-                    kCFRunLoopCommonModes
-                )
-            except Exception:
-                pass
-        if self.tap:
-            try:
-                CGEventTapEnable(self.tap, False)
-            except Exception:
-                pass
-        self.tap = None
-        self.run_loop_source = None
-
-        # Create event tap
-        self.tap = CGEventTapCreate(
-            kCGSessionEventTap,
-            kCGHeadInsertEventTap,
-            kCGEventTapOptionDefault,
-            CGEventMaskBit(kCGEventKeyDown),
-            self._event_callback,
-            None
+        self._monitor = NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(
+            NSKeyDownMask, self._handle_event
+        )
+        # Also listen for events targeting etime's own windows.
+        self._local_monitor = NSEvent.addLocalMonitorForEventsMatchingMask_handler_(
+            NSKeyDownMask, self._handle_local_event
         )
 
-        if not self.tap:
-            print("Error: Failed to create event tap")
+        if not self._monitor:
+            print("Error: Failed to create NSEvent global monitor")
             return False
 
-        # Create run loop source and add to run loop
-        self.run_loop_source = CFMachPortCreateRunLoopSource(None, self.tap, 0)
-        CFRunLoopAddSource(
-            CFRunLoopGetCurrent(),
-            self.run_loop_source,
-            kCFRunLoopCommonModes
-        )
-
-        # Enable the tap
-        CGEventTapEnable(self.tap, True)
+        print("Hotkey manager started successfully (NSEvent monitor)")
         return True
 
-    def check_and_repair(self) -> None:
+    def _dispatch(self, event) -> bool:
+        """Check an event against registered hotkeys; invoke callback if matched.
+
+        Returns True if a hotkey callback was fired (so the local monitor can
+        swallow the event), False otherwise.
         """
-        Periodic health check for the event tap.
-        Call this every few seconds to detect and recover from
-        disabled taps (e.g. caused by Spotify or other apps).
-        Also proactively recreates the tap every ~60s to recover
-        from silent failures where the tap appears enabled but
-        stops firing callbacks.
-        """
-        self._health_check_count += 1
-
-        # Proactive full recreation every ~60s (20 checks * 3s interval)
-        if self._health_check_count % 20 == 0:
-            self.stop()
-            if self._create_tap():
-                print("Event tap proactively recreated")
-            else:
-                print("ERROR: Failed to proactively recreate event tap")
-            return
-
-        if not self.tap:
-            print("WARNING: Event tap is None - attempting full recreation")
-            if self._create_tap():
-                print("Event tap recreated successfully")
-            else:
-                print("ERROR: Failed to recreate event tap")
-            return
-
-        if not CGEventTapIsEnabled(self.tap):
-            print("WARNING: Event tap found disabled during health check - re-enabling")
-            CGEventTapEnable(self.tap, True)
-
-            # Verify it actually re-enabled
-            if CGEventTapIsEnabled(self.tap):
-                print("Event tap re-enabled successfully")
-            else:
-                # Re-enable failed, try full recreation
-                print("WARNING: Re-enable failed - attempting full tap recreation")
-                self.stop()
-                if self._create_tap():
-                    print("Event tap recreated successfully")
-                else:
-                    print("ERROR: Failed to recreate event tap")
-
-    def _event_callback(self, proxy, event_type, event, refcon):
-        """
-        Event tap callback for processing key events.
-
-        Args:
-            proxy: Event tap proxy.
-            event_type: Type of event.
-            event: The event itself.
-            refcon: User-defined data (unused).
-
-        Returns:
-            The event to pass through, or None to consume it.
-        """
-        # Handle system-disabled tap (e.g. Spotify or other apps causing conflict)
-        if event_type in (kCGEventTapDisabledByTimeout, kCGEventTapDisabledByUserInput):
-            reason = "timeout" if event_type == kCGEventTapDisabledByTimeout else "user input"
-            print(f"WARNING: Event tap disabled by {reason} - re-enabling immediately")
-            if self.tap:
-                CGEventTapEnable(self.tap, True)
-            return event
-
         try:
-            # Get keycode
-            keycode = CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode)
+            flags = event.modifierFlags()
+            keycode = event.keyCode()
 
-            # Get modifier flags
-            flags = CGEventGetFlags(event)
+            # Check if our modifiers are pressed (mask to only the ones we care about)
+            relevant_flags = flags & (NSControlKeyMask | NSAlternateKeyMask | NSCommandKeyMask)
+            if relevant_flags != HOTKEY_MODIFIERS:
+                return False
 
-
-            # Check if our modifiers are pressed
-            # Mask to only the modifiers we care about
-            relevant_flags = flags & (
-                kCGEventFlagMaskControl |
-                kCGEventFlagMaskAlternate |
-                kCGEventFlagMaskCommand
-            )
-
-            # Check if this is one of our hotkeys
-            if relevant_flags == HOTKEY_MODIFIERS:
-                shift_pressed = bool(flags & kCGEventFlagMaskShift)
-                key = (keycode, shift_pressed)
-                if key in self.callbacks:
-                    try:
-                        self.callbacks[key]()
-                    except Exception as e:
-                        print(f"Error in hotkey callback for keycode {keycode}: {e}")
-                    return None
-
+            shift_pressed = bool(flags & NSShiftKeyMask)
+            key = (keycode, shift_pressed)
+            if key in self.callbacks:
+                try:
+                    self.callbacks[key]()
+                except Exception as e:
+                    print(f"Error in hotkey callback for keycode {keycode}: {e}")
+                return True
+            return False
         except Exception as e:
-            print(f"Error in event callback: {e}")
+            print(f"Error in event handler: {e}")
+            return False
 
-        # Pass through the event
-        return event
+    def _handle_event(self, event) -> None:
+        """Handle a global key-down event (from other applications)."""
+        self._dispatch(event)
+
+    def _handle_local_event(self, event):
+        """Handle a key-down event targeting an etime window.
+
+        Local-monitor handlers MUST return the event to let it propagate, or
+        None to consume it. We consume matched hotkeys so they don't also type
+        into our own dialogs.
+        """
+        matched = self._dispatch(event)
+        return None if matched else event
+
+    def check_and_repair(self) -> None:
+        """Health check — recreate monitor if it was lost."""
+        if self._monitor is None:
+            print("WARNING: NSEvent monitor is None — recreating")
+            self.force_recreate()
 
     def force_recreate(self) -> bool:
-        """Force full teardown and recreation of the event tap.
-
-        Use after sleep/wake or when the tap silently stops working.
-        Returns True if recreation succeeded.
-        """
-        print("Force-recreating event tap...")
+        """Tear down and recreate the event monitor."""
+        print("Force-recreating NSEvent monitor...")
         self.stop()
-        success = self._create_tap()
-        if success:
-            print("Event tap force-recreated successfully")
+        self._monitor = NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(
+            NSKeyDownMask, self._handle_event
+        )
+        self._local_monitor = NSEvent.addLocalMonitorForEventsMatchingMask_handler_(
+            NSKeyDownMask, self._handle_local_event
+        )
+        if self._monitor:
+            print("NSEvent monitor recreated successfully")
+            return True
         else:
-            print("ERROR: Event tap force-recreation failed")
-        return success
+            print("ERROR: NSEvent monitor recreation failed")
+            return False
 
     def stop(self):
         """Stop listening for hotkeys."""
-        # Properly remove the run loop source before discarding
-        if self.run_loop_source:
-            try:
-                CFRunLoopRemoveSource(
-                    CFRunLoopGetCurrent(),
-                    self.run_loop_source,
-                    kCFRunLoopCommonModes
-                )
-            except Exception as e:
-                print(f"Warning: failed to remove run loop source: {e}")
-        if self.tap:
-            CGEventTapEnable(self.tap, False)
-            self.tap = None
-            self.run_loop_source = None
+        if self._monitor:
+            NSEvent.removeMonitor_(self._monitor)
+            self._monitor = None
+        if self._local_monitor:
+            NSEvent.removeMonitor_(self._local_monitor)
+            self._local_monitor = None
