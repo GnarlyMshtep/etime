@@ -17,20 +17,30 @@ TIMER_INCREMENT_S = 0.1  # 0.1 second increment per tick
 WINDOW_MARGIN_X = 10  # Small margin from edge
 WINDOW_MARGIN_Y = 10  # Small margin from top
 
-# Colors (hex codes)
-COLOR_FOCUSED = "#E3F2FD"  # Light blue background for focused task
-COLOR_OVERTIME = "#D32F2F"  # Red text for overtime tasks
-COLOR_PAUSED = "#999999"  # Gray text for paused tasks
-COLOR_NORMAL = "#000000"  # Black text for normal tasks
-COLOR_UNFOCUSED = "#666666"  # Gray text for non-focused ongoing tasks
-COLOR_AMBITIOUS = "#2E7D32"  # Green text for tasks within ambitious time
+# Colors (hex codes) — "warm paper / study" palette to match the brown-on-grey
+# clock favicon. Text colors keep their original semantic names.
+COLOR_FOCUSED = "#EFE3C8"  # Warm parchment highlight behind the focused task
+COLOR_OVERTIME = "#B23A2E"  # Brick red text for overtime tasks
+COLOR_PAUSED = "#A79E8E"  # Muted taupe text for paused tasks
+COLOR_NORMAL = "#2E2A24"  # Near-black espresso text for normal tasks
+COLOR_UNFOCUSED = "#8A8175"  # Soft stone text for non-focused ongoing tasks
+COLOR_AMBITIOUS = "#4F7A55"  # Sage green text for tasks within ambitious time
 COLOR_BACKGROUND = "#FFFFFF"  # White background
+
+# Surfaces (window + task cards)
+COLOR_WINDOW_BG = "#F4EFE6"      # Warm cream window backdrop
+COLOR_WINDOW_BORDER = "#B89B72"  # Muted brown window border
+COLOR_CARD_BG = "#FCFAF5"        # Off-white card
+COLOR_CARD_BORDER = "#E4DBCA"    # Faint sand card border
+COLOR_FOCUSED_BORDER = "#B89B72" # Brown border for the focused card
+COLOR_RECENT = "#D9A441"         # Warm gold accent for recently-active tasks
 
 # Sounds
 AMBITIOUS_SOUND_FILE = ETIME_DIR / "ambitious.aiff"
 
 # Fonts
 FONT_FAMILY_MONO = "Menlo"  # Monospace font for time display (fixes SF Mono warning)
+FONT_FAMILY_SERIF = "Georgia"  # Fresh serif for task names / headers
 FONT_SIZE = 14
 
 # Focus indicator

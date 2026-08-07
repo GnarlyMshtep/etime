@@ -9,7 +9,7 @@ from PyQt6.QtGui import QFont, QKeyEvent
 
 from config import (
     DEFAULT_TASK_MINUTES, MIN_TASK_MINUTES, MAX_TASK_MINUTES,
-    FONT_SIZE
+    FONT_SIZE, FONT_FAMILY_SERIF
 )
 
 
@@ -35,24 +35,26 @@ class TaskDialog(QDialog):
             Qt.WindowType.Dialog
         )
 
-        # Styling
+        # Styling — warm cream palette matching the overlay
         self.setStyleSheet("""
             QDialog {
-                background-color: white;
-                border: 2px solid #2196F3;
-                border-radius: 8px;
+                background-color: #F4EFE6;
+                border: 2px solid #B89B72;
+                border-radius: 12px;
             }
             QLabel {
-                color: #333333;
+                color: #2E2A24;
             }
             QLineEdit, QSpinBox {
-                border: 1px solid #CCCCCC;
-                border-radius: 4px;
+                background-color: #FCFAF5;
+                border: 1px solid #D6CCB8;
+                border-radius: 6px;
                 padding: 6px;
                 font-size: 14px;
+                color: #2E2A24;
             }
             QLineEdit:focus, QSpinBox:focus {
-                border: 2px solid #2196F3;
+                border: 2px solid #B89B72;
             }
         """)
 
@@ -66,8 +68,8 @@ class TaskDialog(QDialog):
 
         # Title
         title = QLabel("New Task")
-        title_font = QFont()
-        title_font.setPointSize(16)
+        title_font = QFont(FONT_FAMILY_SERIF)
+        title_font.setPointSize(17)
         title_font.setBold(True)
         title.setFont(title_font)
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)

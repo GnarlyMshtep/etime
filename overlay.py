@@ -12,7 +12,9 @@ from models import Task, TaskState
 from config import (
     WINDOW_MARGIN_X, WINDOW_MARGIN_Y,
     COLOR_FOCUSED, COLOR_OVERTIME, COLOR_PAUSED, COLOR_NORMAL, COLOR_UNFOCUSED, COLOR_AMBITIOUS,
-    FONT_FAMILY_MONO, FONT_SIZE,
+    COLOR_WINDOW_BG, COLOR_WINDOW_BORDER, COLOR_CARD_BG, COLOR_CARD_BORDER,
+    COLOR_FOCUSED_BORDER, COLOR_RECENT,
+    FONT_FAMILY_MONO, FONT_FAMILY_SERIF, FONT_SIZE,
     FOCUS_INDICATOR, NO_FOCUS_INDICATOR,
     FADE_IN_DURATION_MS, FADE_OUT_DURATION_MS
 )
@@ -30,6 +32,7 @@ class TaskWidget(QWidget):
         self.has_children = False  # Whether this task has subtasks (shows a fold triangle)
         self.is_collapsed = False  # Whether this task's subtree is currently folded
         self.has_active_hidden = False  # A folded-away descendant is currently running
+        self.has_overtime_hidden = False  # A folded-away running descendant is overtime
         self.hidden_count = 0  # Number of folded-away non-stashed descendants (shown when collapsed)
         self.parked_count = 0  # Number of folded-away stashed descendants (the "p" in "n/p")
         self.is_stashed = False  # Track stashed display state
@@ -45,8 +48,11 @@ class TaskWidget(QWidget):
         self.focus_label.setFixedWidth(20)
         layout.addWidget(self.focus_label)
 
-        # Task name (allow wrapping to 2 lines)
+        # Task name (allow wrapping to 2 lines), in a fresh serif face
         self.name_label = QLabel(task.name)
+        name_font = QFont(FONT_FAMILY_SERIF, FONT_SIZE)
+        name_font.setStyleHint(QFont.StyleHint.Serif)
+        self.name_label.setFont(name_font)
         self.name_label.setMinimumWidth(150)
         self.name_label.setMaximumWidth(350)
         self.name_label.setWordWrap(True)
@@ -109,32 +115,38 @@ class TaskWidget(QWidget):
         # Stashed tasks get dimmed appearance with marker
         self.is_stashed = self.property("stashed") or False
         if self.is_stashed:
-            color = "#999999"
-            bg_color = "#F0F0F0" if self.is_focused else "#E8E8E8"
-            border_color = "#CCCCCC"
+            color = "#A79E8E"
+            bg_color = "#EFEAE0" if self.is_focused else "#E7E1D5"
+            border_color = "#D6CCB8"
         else:
-            bg_color = COLOR_FOCUSED if self.is_focused else "#FFFFFF"
-            border_color = "#DDDDDD"
+            bg_color = COLOR_FOCUSED if self.is_focused else COLOR_CARD_BG
+            border_color = COLOR_FOCUSED_BORDER if self.is_focused else COLOR_CARD_BORDER
 
-        # A folded category with a running subtask inside gets a green accent, so
-        # you can tell work is still happening even though it's collapsed.
+        # A folded category with a running subtask inside gets an accent so you
+        # can tell work is still happening even though it's collapsed: red when
+        # that hidden task is overtime, otherwise sage green.
         if self.is_collapsed and self.has_active_hidden:
-            color = COLOR_AMBITIOUS
-            bg_color = "#C8E6C9" if self.is_focused else "#E8F5E9"
-            border_color = "#4CAF50"
+            if self.has_overtime_hidden:
+                color = COLOR_OVERTIME
+                bg_color = "#F0D6D1" if self.is_focused else "#F7E7E4"
+                border_color = "#B23A2E"
+            else:
+                color = COLOR_AMBITIOUS
+                bg_color = "#D4E3D2" if self.is_focused else "#E6EFE4"
+                border_color = "#4F7A55"
 
         # Recently-active tasks (or the visible section header of a folded-away
         # active task) get a gold border so you can spot where work is happening.
         border_width = 1
         if self.is_recent:
-            border_color = "#FF9800"
+            border_color = COLOR_RECENT
             border_width = 2
 
         # Apply styling
         self.setStyleSheet(f"""
             TaskWidget {{
                 background-color: {bg_color};
-                border-radius: 6px;
+                border-radius: 8px;
                 border: {border_width}px solid {border_color};
                 padding: 2px;
             }}
@@ -204,18 +216,20 @@ class TaskWidget(QWidget):
 
     def set_fold_state(self, has_children: bool, is_collapsed: bool,
                        has_active_hidden: bool = False, hidden_count: int = 0,
-                       parked_count: int = 0):
+                       parked_count: int = 0, has_overtime_hidden: bool = False):
         """Set fold-related display state (triangle, collapse tint, hidden count)."""
         if (self.has_children != has_children
                 or self.is_collapsed != is_collapsed
                 or self.has_active_hidden != has_active_hidden
                 or self.hidden_count != hidden_count
-                or self.parked_count != parked_count):
+                or self.parked_count != parked_count
+                or self.has_overtime_hidden != has_overtime_hidden):
             self.has_children = has_children
             self.is_collapsed = is_collapsed
             self.has_active_hidden = has_active_hidden
             self.hidden_count = hidden_count
             self.parked_count = parked_count
+            self.has_overtime_hidden = has_overtime_hidden
             self.update_display()
 
     def set_recent(self, is_recent: bool):
@@ -257,12 +271,12 @@ class OverlayWindow(QWidget):
             Qt.WindowType.Tool
         )
 
-        # Window styling
+        # Window styling — warm cream backdrop, soft brown border, rounder corners
         self.setStyleSheet(f"""
             OverlayWindow {{
-                background-color: #FFE0B2;  /* Light orange */
-                border: 2px solid #FF9800;  /* Darker orange border */
-                border-radius: 8px;
+                background-color: {COLOR_WINDOW_BG};
+                border: 2px solid {COLOR_WINDOW_BORDER};
+                border-radius: 14px;
             }}
         """)
 
@@ -547,17 +561,20 @@ class OverlayWindow(QWidget):
         """True if any active task is a direct subtask of this one."""
         return any(t.parent_task_id == task.id for t in self.tasks)
 
-    def _subtree_info(self, task: Task, by_id: Dict[str, Task]) -> tuple[int, int, bool]:
-        """Return (active_count, parked_count, any_descendant_ongoing) for a subtree.
+    def _subtree_info(self, task: Task, by_id: Dict[str, Task]) -> tuple[int, int, bool, bool]:
+        """Return (active_count, parked_count, has_ongoing, has_overtime) for a subtree.
 
         ``active_count`` counts non-stashed descendants (the rows you'd see when
         unfolded); ``parked_count`` counts stashed descendants (only visible with
-        "show all"). Walks each task's ancestor chain to see if ``task`` is an
-        ancestor; cycle-guarded and robust to non-contiguous subtrees.
+        "show all"). ``has_overtime`` is True if any ongoing descendant is past
+        its estimate (so a folded header can show red instead of green). Walks
+        each task's ancestor chain to see if ``task`` is an ancestor; cycle-guarded
+        and robust to non-contiguous subtrees.
         """
         count = 0
         parked = 0
         has_active = False
+        has_overtime = False
         for t in self.tasks:
             if t.id == task.id:
                 continue
@@ -579,7 +596,9 @@ class OverlayWindow(QWidget):
                     count += 1
                 if t.state == TaskState.ONGOING:
                     has_active = True
-        return count, parked, has_active
+                    if t.elapsed_seconds >= t.estimated_seconds:
+                        has_overtime = True
+        return count, parked, has_active, has_overtime
 
     def _visible_tasks(self) -> List[Task]:
         """Return tasks that should be visible (respecting stash + collapse state)."""
@@ -747,13 +766,13 @@ class OverlayWindow(QWidget):
                 # Fold triangle + (when collapsed) subtask count and active-inside tint
                 has_children = self._has_children(task)
                 if has_children:
-                    active_count, parked_count, has_active = self._subtree_info(task, by_id)
+                    active_count, parked_count, has_active, has_overtime = self._subtree_info(task, by_id)
                 else:
-                    active_count, parked_count, has_active = 0, 0, False
+                    active_count, parked_count, has_active, has_overtime = 0, 0, False, False
                 widget.set_fold_state(
                     has_children, task.is_collapsed,
                     has_active_hidden=has_active, hidden_count=active_count,
-                    parked_count=parked_count,
+                    parked_count=parked_count, has_overtime_hidden=has_overtime,
                 )
                 # Recent-activity highlight (see _recently_active_ids)
                 widget.set_recent(task.id in highlight_ids)

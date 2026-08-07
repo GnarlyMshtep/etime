@@ -4,10 +4,13 @@ from typing import List, Tuple
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QLineEdit, QListWidget, QListWidgetItem
 )
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, QEvent, pyqtSignal
 from PyQt6.QtGui import QFont, QKeyEvent
 
 from models import Task
+from config import (
+    FONT_FAMILY_SERIF, COLOR_WINDOW_BG, COLOR_WINDOW_BORDER, COLOR_FOCUSED,
+)
 
 
 class SearchDialog(QDialog):
@@ -30,33 +33,37 @@ class SearchDialog(QDialog):
             Qt.WindowType.FramelessWindowHint |
             Qt.WindowType.Dialog
         )
-        self.setStyleSheet("""
-            QDialog {
-                background-color: white;
-                border: 2px solid #2196F3;
-                border-radius: 10px;
-            }
-            QLineEdit {
-                border: 1px solid #CCCCCC;
-                border-radius: 6px;
-                padding: 8px;
+        self.setStyleSheet(f"""
+            QDialog {{
+                background-color: {COLOR_WINDOW_BG};
+                border: 2px solid {COLOR_WINDOW_BORDER};
+                border-radius: 14px;
+            }}
+            QLineEdit {{
+                background-color: #FCFAF5;
+                border: 1px solid #D6CCB8;
+                border-radius: 8px;
+                padding: 9px;
                 font-size: 16px;
-            }
-            QLineEdit:focus {
-                border: 2px solid #2196F3;
-            }
-            QListWidget {
+                color: #2E2A24;
+            }}
+            QLineEdit:focus {{
+                border: 2px solid {COLOR_WINDOW_BORDER};
+            }}
+            QListWidget {{
+                background-color: transparent;
                 border: none;
-                font-size: 14px;
-            }
-            QListWidget::item {
-                padding: 6px;
-                border-radius: 4px;
-            }
-            QListWidget::item:selected {
-                background-color: #E3F2FD;
-                color: #000000;
-            }
+                font-size: 15px;
+                color: #2E2A24;
+            }}
+            QListWidget::item {{
+                padding: 7px;
+                border-radius: 6px;
+            }}
+            QListWidget::item:selected {{
+                background-color: {COLOR_FOCUSED};
+                color: #2E2A24;
+            }}
         """)
         self.setFixedWidth(480)
 
@@ -67,11 +74,14 @@ class SearchDialog(QDialog):
 
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("Search tasks…")
+        self.search_input.setFont(QFont(FONT_FAMILY_SERIF, 15))
         self.search_input.textChanged.connect(self._refilter)
+        # Keep focus in the text box but route arrows/Enter to the list.
+        self.search_input.installEventFilter(self)
         layout.addWidget(self.search_input)
 
         self.results = QListWidget()
-        self.results.setFont(QFont("Menlo", 13))
+        self.results.setFont(QFont(FONT_FAMILY_SERIF, 14))
         self.results.itemActivated.connect(lambda _: self._choose())
         self.results.itemClicked.connect(lambda _: self._choose())
         layout.addWidget(self.results)
@@ -106,6 +116,36 @@ class SearchDialog(QDialog):
         self.task_selected.emit(task_id)
         self.accept()
 
+    def _move_selection(self, delta: int) -> None:
+        """Move the highlighted row by ``delta``, clamped to the list bounds."""
+        count = self.results.count()
+        if count == 0:
+            return
+        row = self.results.currentRow()
+        if row < 0:
+            row = 0
+        row = max(0, min(row + delta, count - 1))
+        self.results.setCurrentRow(row)
+
+    def eventFilter(self, obj, event):
+        """Route Up/Down/Enter from the search box to the results list.
+
+        The text box keeps focus (so typing works), but arrow keys navigate the
+        list instead of moving the text cursor.
+        """
+        if obj is self.search_input and event.type() == QEvent.Type.KeyPress:
+            key = event.key()
+            if key == Qt.Key.Key_Down:
+                self._move_selection(1)
+                return True
+            if key == Qt.Key.Key_Up:
+                self._move_selection(-1)
+                return True
+            if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                self._choose()
+                return True
+        return super().eventFilter(obj, event)
+
     def keyPressEvent(self, event: QKeyEvent):
         key = event.key()
         if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
@@ -113,11 +153,9 @@ class SearchDialog(QDialog):
         elif key == Qt.Key.Key_Escape:
             self.reject()
         elif key == Qt.Key.Key_Down:
-            row = min(self.results.currentRow() + 1, self.results.count() - 1)
-            self.results.setCurrentRow(max(row, 0))
+            self._move_selection(1)
         elif key == Qt.Key.Key_Up:
-            row = max(self.results.currentRow() - 1, 0)
-            self.results.setCurrentRow(row)
+            self._move_selection(-1)
         else:
             super().keyPressEvent(event)
 
