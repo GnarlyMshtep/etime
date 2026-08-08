@@ -34,6 +34,11 @@ COLOR_CARD_BG = "#FCFAF5"        # Off-white card
 COLOR_CARD_BORDER = "#E4DBCA"    # Faint sand card border
 COLOR_FOCUSED_BORDER = "#B89B72" # Brown border for the focused card
 COLOR_RECENT = "#D9A441"         # Warm gold accent for recently-active tasks
+COLOR_LAST_RUN_BG = "#CFE1F2"    # Light blue fill for the last-run "return here" task
+
+# The last-run task must have run at least this long to be highlighted (a shorter
+# run usually means you started it and immediately paused).
+LAST_RUN_MIN_SECONDS = 3.0
 
 # Sounds
 AMBITIOUS_SOUND_FILE = ETIME_DIR / "ambitious.aiff"

@@ -1,6 +1,7 @@
 """Main overlay window for etime application."""
 
 from typing import List, Optional, Dict
+from datetime import datetime
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QGraphicsOpacityEffect, QSizePolicy
@@ -13,7 +14,7 @@ from config import (
     WINDOW_MARGIN_X, WINDOW_MARGIN_Y,
     COLOR_FOCUSED, COLOR_OVERTIME, COLOR_PAUSED, COLOR_NORMAL, COLOR_UNFOCUSED, COLOR_AMBITIOUS,
     COLOR_WINDOW_BG, COLOR_WINDOW_BORDER, COLOR_CARD_BG, COLOR_CARD_BORDER,
-    COLOR_FOCUSED_BORDER, COLOR_RECENT,
+    COLOR_FOCUSED_BORDER, COLOR_RECENT, COLOR_LAST_RUN_BG, LAST_RUN_MIN_SECONDS,
     FONT_FAMILY_MONO, FONT_FAMILY_SERIF, FONT_SIZE,
     FOCUS_INDICATOR, NO_FOCUS_INDICATOR,
     FADE_IN_DURATION_MS, FADE_OUT_DURATION_MS
@@ -37,6 +38,7 @@ class TaskWidget(QWidget):
         self.parked_count = 0  # Number of folded-away stashed descendants (the "p" in "n/p")
         self.is_stashed = False  # Track stashed display state
         self.is_recent = False  # One of the most-recently-active tasks (gets a highlight)
+        self.is_last_run = False  # The single last-run task (gets a "return here" fill)
 
         # Create layout
         layout = QHBoxLayout()
@@ -134,6 +136,12 @@ class TaskWidget(QWidget):
                 color = COLOR_AMBITIOUS
                 bg_color = "#D4E3D2" if self.is_focused else "#E6EFE4"
                 border_color = "#4F7A55"
+
+        # The single most-recently-run task (that ran long enough to be real)
+        # gets a soft blue fill so you can jump back to it after stepping away.
+        if (self.is_last_run and not self.is_stashed
+                and not (self.is_collapsed and self.has_active_hidden)):
+            bg_color = COLOR_LAST_RUN_BG
 
         # Recently-active tasks (or the visible section header of a folded-away
         # active task) get a gold border so you can spot where work is happening.
@@ -236,6 +244,12 @@ class TaskWidget(QWidget):
         """Mark/unmark this row as a recently-active task and refresh display."""
         if self.is_recent != is_recent:
             self.is_recent = is_recent
+            self.update_display()
+
+    def set_last_run(self, is_last_run: bool):
+        """Mark/unmark this row as the last-run "return here" task."""
+        if self.is_last_run != is_last_run:
+            self.is_last_run = is_last_run
             self.update_display()
 
     @staticmethod
@@ -712,6 +726,33 @@ class OverlayWindow(QWidget):
         scored.sort(reverse=True)
         return [tid for _, tid in scored[:limit]]
 
+    def _last_run_task_id(self) -> Optional[str]:
+        """ID of the still-active task whose most recent run was the latest.
+
+        Only considers work intervals that ran at least ``LAST_RUN_MIN_SECONDS``
+        (a shorter run usually means "started then immediately paused"). Returns
+        None if no task qualifies.
+        """
+        best_id: Optional[str] = None
+        best_start: Optional[str] = None
+        for t in self.tasks:
+            for iv in t.work_intervals:
+                start = iv.get("start")
+                if not start:
+                    continue
+                try:
+                    start_dt = datetime.fromisoformat(start)
+                    end = iv.get("end")
+                    end_dt = datetime.fromisoformat(end) if end else datetime.now()
+                except (ValueError, TypeError):
+                    continue
+                if (end_dt - start_dt).total_seconds() < LAST_RUN_MIN_SECONDS:
+                    continue
+                if best_start is None or start > best_start:
+                    best_start = start
+                    best_id = t.id
+        return best_id
+
     def _nearest_visible_ancestor(self, task: Task, by_id: Dict[str, Task],
                                   visible_ids: set) -> Optional[str]:
         """ID of the closest ancestor that is currently visible, or None."""
@@ -752,6 +793,19 @@ class OverlayWindow(QWidget):
         visible = self._visible_tasks()
         visible_ids = {t.id for t in visible}
         highlight_ids = self._highlight_ids(by_id, visible_ids)
+
+        # Map the last-run task to a visible target (itself, or — if folded away —
+        # its nearest visible section header), so the blue cue is always visible.
+        last_run_id = self._last_run_task_id()
+        last_run_target: Optional[str] = None
+        if last_run_id is not None:
+            if last_run_id in visible_ids:
+                last_run_target = last_run_id
+            elif last_run_id in by_id:
+                last_run_target = self._nearest_visible_ancestor(
+                    by_id[last_run_id], by_id, visible_ids
+                )
+
         for i, task in enumerate(visible):
             if task.id in self.task_widgets:
                 widget = self.task_widgets[task.id]
@@ -776,6 +830,8 @@ class OverlayWindow(QWidget):
                 )
                 # Recent-activity highlight (see _recently_active_ids)
                 widget.set_recent(task.id in highlight_ids)
+                # "Return here" cue on the single last-run task
+                widget.set_last_run(task.id == last_run_target)
                 # Apply stashed styling in show-all mode
                 widget.setProperty("stashed", task.is_stashed)
                 widget.update_display()
