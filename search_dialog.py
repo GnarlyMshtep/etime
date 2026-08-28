@@ -18,6 +18,12 @@ class SearchDialog(QDialog):
 
     # Emitted with the selected task's id.
     task_selected = pyqtSignal(str)
+    # Emitted with the typed text when the user asks to create a new task
+    # (Enter with no matching result).
+    create_task_requested = pyqtSignal(str)
+
+    # Sentinel stored on the synthetic "create new task" row.
+    _CREATE_SENTINEL = "__create__"
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -96,7 +102,8 @@ class SearchDialog(QDialog):
 
     def _refilter(self, text: str = "") -> None:
         """Repopulate the result list, filtering by substring match."""
-        query = self.search_input.text().strip().lower()
+        raw = self.search_input.text().strip()
+        query = raw.lower()
         self.results.clear()
         for name, task_id in self._tasks:
             if query and query not in name.lower():
@@ -104,16 +111,24 @@ class SearchDialog(QDialog):
             item = QListWidgetItem(name)
             item.setData(Qt.ItemDataRole.UserRole, task_id)
             self.results.addItem(item)
+        # No match but something typed → offer to create a new task with that name.
+        if self.results.count() == 0 and raw:
+            item = QListWidgetItem(f"＋  Create new task “{raw}”")
+            item.setData(Qt.ItemDataRole.UserRole, self._CREATE_SENTINEL)
+            self.results.addItem(item)
         if self.results.count() > 0:
             self.results.setCurrentRow(0)
 
     def _choose(self) -> None:
-        """Emit the currently-highlighted task and close."""
+        """Emit the currently-highlighted task (or a create request) and close."""
         item = self.results.currentItem()
         if item is None:
             return
-        task_id = item.data(Qt.ItemDataRole.UserRole)
-        self.task_selected.emit(task_id)
+        data = item.data(Qt.ItemDataRole.UserRole)
+        if data == self._CREATE_SENTINEL:
+            self.create_task_requested.emit(self.search_input.text().strip())
+        else:
+            self.task_selected.emit(data)
         self.accept()
 
     def _move_selection(self, delta: int) -> None:

@@ -84,3 +84,6 @@ KEY_LEFT = 123  # Left arrow - Unstash (with Shift)
 KEY_RIGHT = 124 # Right arrow - Stash (with Shift)
 KEY_G = 5       # G key - Log deterred distraction
 KEY_SLASH = 44  # / key - Search tasks
+KEY_E = 14      # E key - Edit focused task's name
+KEY_EQUAL = 24  # = / + key - Add elapsed minutes to focused task
+KEY_MINUS = 27  # - / _ key - Remove elapsed minutes from focused task

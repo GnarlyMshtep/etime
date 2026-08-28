@@ -3,7 +3,7 @@
 
 import sys
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from PyQt6.QtWidgets import QApplication, QMessageBox, QDialog, QVBoxLayout, QLabel
 from PyQt6.QtCore import QObject, QTimer, Qt
@@ -26,8 +26,10 @@ class UndoAction:
     """A single undoable action, stored on the undo stack (most recent last).
 
     kind:
-        "create"   — task was created; undo removes it.
-        "complete" — task was completed; undo restores it to its original spot.
+        "create"      — task was created; undo removes it.
+        "complete"    — task was completed; undo restores it to its original spot.
+        "adjust_time" — minutes were added to / removed from a task's time; undo
+                        restores the snapshotted intervals, elapsed, and alarm.
     anchor_before_id:
         ID of the task that was immediately before this one in ``self.tasks`` at
         action time (None if it was first). Used to restore the *exact original
@@ -35,17 +37,42 @@ class UndoAction:
     fallback_index:
         Absolute index in ``self.tasks`` at action time, used only if the anchor
         task is no longer present.
+    reparented_children:
+        For a "complete" action: (child_id, previous_parent_id) pairs for each
+        direct child that was promoted up one level when this task was completed.
+        Undo restores each child to its recorded previous parent. Storing the
+        previous parent (not just the id) keeps undo correct under interleaved
+        completions/undos.
+    prev_work_intervals:
+        For an "adjust_time" action: a deep copy of the task's work_intervals
+        before the adjustment, restored on undo. A snapshot is robust to add
+        (one interval inserted) and remove (several intervals trimmed/dropped)
+        alike.
+    prev_last_alarm_level:
+        For an "adjust_time" action: the task's alarm level before the change,
+        restored on undo (add may raise it to suppress an immediate alarm; remove
+        may lower it to re-arm one).
+    prev_elapsed_seconds:
+        For an "adjust_time" action: the task's elapsed_seconds before the change,
+        restored verbatim on undo (a plain recompute can't recover it when the
+        backfill was the task's only interval).
     """
     kind: str
     task: Task
     anchor_before_id: Optional[str] = None
     fallback_index: int = -1
+    reparented_children: list[tuple[str, Optional[str]]] = field(default_factory=list)
+    prev_work_intervals: Optional[list] = None
+    prev_last_alarm_level: int = 0
+    prev_elapsed_seconds: float = 0.0
 from timer_engine import TimerEngine
 from overlay import OverlayWindow
 from task_dialog import TaskDialog
 from search_dialog import SearchDialog
+from rename_dialog import RenameDialog
+from time_adjust_dialog import TimeAdjustDialog
 from hotkeys import HotkeyManager
-from config import KEY_N, KEY_P, KEY_C, KEY_Q, KEY_S, KEY_U, KEY_H, KEY_T, KEY_F, KEY_UP, KEY_DOWN, KEY_A, KEY_LEFT, KEY_RIGHT, KEY_G, KEY_SLASH, DETERRED_FILE
+from config import KEY_N, KEY_P, KEY_C, KEY_Q, KEY_S, KEY_U, KEY_H, KEY_T, KEY_F, KEY_UP, KEY_DOWN, KEY_A, KEY_LEFT, KEY_RIGHT, KEY_G, KEY_SLASH, KEY_E, KEY_EQUAL, KEY_MINUS, DEFAULT_TASK_MINUTES, DETERRED_FILE
 from sounds import play_alarm_loop, stop_alarm, play_success_sound, play_ambitious_success_sound
 import dashboard
 
@@ -89,11 +116,14 @@ class HelpDialog(QDialog):
             ("⌃⌥⌘N", "New task"),
             ("⌃⌥⌘P", "Toggle start / pause"),
             ("⌃⌥⌘C", "Complete focused task"),
+            ("⌃⌥⌘E", "Rename focused task"),
+            ("⌃⌥⌘+", "Add time to focused task"),
+            ("⌃⌥⌘−", "Remove time from focused task"),
             ("⌃⌥⌘U", "Undo (last 5 actions)"),
             ("⌃⌥⌘Q", "Dismiss alarm"),
             ("⌃⌥⌘S", "Toggle overlay visibility"),
             ("⌃⌥⌘H", "Toggle this help"),
-            ("⌃⌥⌘/", "Search tasks & jump"),
+            ("⌃⌥⌘/", "Search, jump, or create task"),
             ("⌃⌥⌘T", "Toggle subtask (of task above)"),
             ("⌃⌥⌘F", "Fold / unfold subtasks"),
             ("⌃⌥⌘A", "Toggle show all (stashed tasks)"),
@@ -179,6 +209,13 @@ class AppController(QObject):
         self.hotkey_manager.register(KEY_A, self.toggle_show_all)
         self.hotkey_manager.register(KEY_G, self.log_deterred)
         self.hotkey_manager.register(KEY_SLASH, self.open_search)
+        self.hotkey_manager.register(KEY_E, self.edit_task_name)
+        # ⌃⌥⌘+ adds time, ⌃⌥⌘− removes it; register both the shifted and bare
+        # variants of each key so a fumbled Shift still works.
+        self.hotkey_manager.register(KEY_EQUAL, self.add_time)
+        self.hotkey_manager.register(KEY_EQUAL, self.add_time, shift=True)
+        self.hotkey_manager.register(KEY_MINUS, self.subtract_time)
+        self.hotkey_manager.register(KEY_MINUS, self.subtract_time, shift=True)
 
         if not self.hotkey_manager.start():
             # Show error dialog if hotkeys fail
@@ -203,6 +240,19 @@ class AppController(QObject):
         # Setup search dialog (kept as instance to prevent GC)
         self.search_dialog = SearchDialog()
         self.search_dialog.task_selected.connect(self._on_search_selected)
+        self.search_dialog.create_task_requested.connect(self._on_search_create)
+
+        # Setup rename dialog (kept as instance to prevent GC)
+        self.rename_dialog = RenameDialog()
+        self.rename_dialog.name_submitted.connect(self._on_rename_submitted)
+        # Id of the task currently being renamed (set when the dialog opens).
+        self._renaming_task_id: Optional[str] = None
+
+        # Setup time-adjust dialog (kept as instance to prevent GC)
+        self.time_adjust_dialog = TimeAdjustDialog()
+        self.time_adjust_dialog.minutes_submitted.connect(self._on_time_adjust_submitted)
+        # Id of the task currently being time-adjusted (set when the dialog opens).
+        self._time_adjust_task_id: Optional[str] = None
 
         # Setup sleep/wake observer
         self._sleep_observer = SleepObserver.alloc().init()
@@ -248,8 +298,13 @@ class AppController(QObject):
         # Save state (alarm level was updated in timer engine)
         save_active_tasks(self.tasks)
 
-    def new_task(self):
-        """Handle new task hotkey."""
+    def new_task(self, suppress_parent: bool = False):
+        """Handle new task hotkey.
+
+        suppress_parent: when True, do not pre-fill the focused task as parent
+        context (used by the search "create new task" path, which should make a
+        top-level task rather than silently nesting under whatever is focused).
+        """
         print("New task hotkey pressed")
 
         # Store previously focused app for focus restoration
@@ -264,7 +319,7 @@ class AppController(QObject):
 
         # Pass focused task as potential parent for subtask checkbox
         focused = self.overlay.get_focused_task()
-        if focused:
+        if focused and not suppress_parent:
             self.task_dialog.set_parent_context(
                 parent_name=focused.name, parent_task_id=focused.id
             )
@@ -465,12 +520,24 @@ class AppController(QObject):
                 stop_alarm()
                 print("All alarms cleared - sound stopped")
 
+        # Promote direct children up exactly one level: re-parent them to this
+        # task's own parent. Without this, a completed task's children become
+        # orphans that render as top-level — so a grandchild would jump up two
+        # levels when its immediate parent is completed. Record each child's
+        # previous parent so undo can restore the links.
+        reparented_children: list[tuple[str, Optional[str]]] = []
+        for child in self.tasks:
+            if child.parent_task_id == task_id:
+                reparented_children.append((child.id, child.parent_task_id))
+                child.parent_task_id = task.parent_task_id
+
         # Save state for undo (before modifying)
         self.undo_stack.append(UndoAction(
             kind="complete",
             task=task,
             anchor_before_id=anchor_before_id,
             fallback_index=full_index,
+            reparented_children=reparented_children,
         ))
 
         task.end_interval()
@@ -484,6 +551,11 @@ class AppController(QObject):
 
         # Remove from active tasks
         self.tasks.remove(task)
+
+        # Persist immediately. The removal animation's callback also saves, but it
+        # is skipped when the widget can't be found (e.g. a folded-away task), so
+        # save here to guarantee the re-parenting reaches disk.
+        save_active_tasks(self.tasks)
 
         # Update focus index if needed (use visible task count)
         visible_count = len(self.overlay._visible_tasks())
@@ -563,6 +635,8 @@ class AppController(QObject):
             self._undo_creation(action)
         elif action.kind == "complete":
             self._undo_completion(action)
+        elif action.kind == "adjust_time":
+            self._undo_adjust_time(action)
         else:
             print(f"Unknown undo action kind: {action.kind}")
 
@@ -622,6 +696,26 @@ class AppController(QObject):
         # Reopen the dialog so the restored text is right there to re-edit.
         self.new_task()
 
+    def _undo_adjust_time(self, action: UndoAction):
+        """Undo an add/remove-time — restores the snapshotted intervals and state."""
+        task = action.task
+        print(f"Undoing time adjustment on: {task.name}")
+
+        # Restore a fresh copy of the pre-adjustment intervals (fresh so a later
+        # redo/undo can't alias the stored snapshot).
+        if action.prev_work_intervals is not None:
+            task.work_intervals = [dict(iv) for iv in action.prev_work_intervals]
+
+        task.last_alarm_level = action.prev_last_alarm_level
+        # Restore the exact prior elapsed. A recompute would be wrong when the
+        # only interval was the one added (compute_elapsed would then fall back to
+        # the now-stale elapsed_seconds).
+        task.elapsed_seconds = action.prev_elapsed_seconds
+
+        save_active_tasks(self.tasks)
+        self.overlay.update_display()
+        print(f"Restored time on '{task.name}'")
+
     def _undo_completion(self, action: UndoAction):
         """Undo a task completion — restores the task to its original position."""
         task = action.task
@@ -639,6 +733,14 @@ class AppController(QObject):
         task.state = TaskState.ONGOING
         task.completed_at = None
         task.start_interval()
+
+        # Restore any children that were promoted up a level on completion, back
+        # to their recorded previous parent (this task, in the normal case).
+        if action.reparented_children:
+            prev_parent = dict(action.reparented_children)
+            for child in self.tasks:
+                if child.id in prev_parent:
+                    child.parent_task_id = prev_parent[child.id]
 
         # Re-insert at original position (anchored to the task it followed).
         insert_index = self._reinsertion_index(action)
@@ -810,10 +912,11 @@ class AppController(QObject):
             print(f"Resumed {resumed} auto-paused task(s)")
 
     def open_search(self):
-        """Open the centered task-search popup (⌃⌥⌘/)."""
-        if not self.tasks:
-            print("No tasks to search")
-            return
+        """Open the centered task-search popup (⌃⌥⌘/).
+
+        Opens even with no tasks: typing a name and pressing Enter with no match
+        offers to create a new task with that name.
+        """
         self.previous_app = NSWorkspace.sharedWorkspace().frontmostApplication()
         self.search_dialog.set_tasks(self.tasks)
         self.search_dialog.show()
@@ -851,6 +954,147 @@ class AppController(QObject):
         save_active_tasks(self.tasks)
 
         # Restore focus to the app the user was in before searching.
+        if self.previous_app:
+            self.previous_app.activateWithOptions_(1)
+            self.previous_app = None
+
+    def _on_search_create(self, name: str):
+        """Create a new task from the search box when nothing matched.
+
+        Opens the New Task dialog pre-filled with the typed name, as a top-level
+        task (parent context suppressed).
+        """
+        name = name.strip()
+        if not name:
+            return
+        print(f"Search: creating new task '{name}'")
+        # Pre-fill the dialog with the typed name (default time/ambitious).
+        self._pending_prefill = {
+            "name": name,
+            "minutes": DEFAULT_TASK_MINUTES,
+            "ambitious_minutes": 0,
+        }
+        self.new_task(suppress_parent=True)
+
+    def edit_task_name(self):
+        """Rename the focused task in place (⌃⌥⌘E).
+
+        Edits whichever task is focused (which is normally the running one). If
+        the rename dialog is already open, do nothing so re-pressing the hotkey
+        (which the local monitor also delivers) doesn't reset the field.
+        """
+        if self.rename_dialog.isVisible():
+            return
+        task = self.overlay.get_focused_task()
+        if not task:
+            print("No task focused to rename")
+            return
+        self.previous_app = NSWorkspace.sharedWorkspace().frontmostApplication()
+        self._renaming_task_id = task.id
+        print(f"Renaming task: {task.name}")
+        self.rename_dialog.open_for(task.name)
+
+    def _on_rename_submitted(self, new_name: str):
+        """Apply a submitted rename to the task that was being edited."""
+        task_id = self._renaming_task_id
+        self._renaming_task_id = None
+        task = next((t for t in self.tasks if t.id == task_id), None)
+        if task is None:
+            print(f"Rename target {task_id} no longer exists")
+            return
+        old = task.name
+        task.name = new_name
+        print(f"Renamed '{old}' -> '{new_name}'")
+        save_active_tasks(self.tasks)
+        self.overlay.update_display()
+
+        # Restore focus to the app the user was in before renaming.
+        if self.previous_app:
+            self.previous_app.activateWithOptions_(1)
+            self.previous_app = None
+
+    def add_time(self):
+        """Add elapsed minutes to the focused task, backdated to now (⌃⌥⌘+).
+
+        Opens the time-adjust dialog on the focused task (normally the running
+        one). The entered minutes are attributed to the [now - N, now] window so
+        they show up in the dashboard's time-of-day view just before now.
+        """
+        self._open_time_adjust(adding=True)
+
+    def subtract_time(self):
+        """Remove elapsed minutes from the focused task (⌃⌥⌘−).
+
+        Trims the entered minutes off the most recent end of the task's timeline,
+        capped at the time actually spent (elapsed never goes negative).
+        """
+        self._open_time_adjust(adding=False)
+
+    def _open_time_adjust(self, adding: bool):
+        """Shared opener for the add/remove-time dialog."""
+        if self.time_adjust_dialog.isVisible():
+            return
+        task = self.overlay.get_focused_task()
+        if not task:
+            print(f"No task focused to {'add time to' if adding else 'remove time from'}")
+            return
+        self.previous_app = NSWorkspace.sharedWorkspace().frontmostApplication()
+        self._time_adjust_task_id = task.id
+        print(f"{'Adding time to' if adding else 'Removing time from'} task: {task.name}")
+        self.time_adjust_dialog.open_for(task.name, adding)
+
+    def _on_time_adjust_submitted(self, minutes: int, adding: bool):
+        """Apply an add/remove-time submission to the task that was being edited."""
+        task_id = self._time_adjust_task_id
+        self._time_adjust_task_id = None
+        task = next((t for t in self.tasks if t.id == task_id), None)
+        if task is None:
+            print(f"Time-adjust target {task_id} no longer exists")
+            return
+
+        # Snapshot for undo: a full intervals copy plus the scalars we touch.
+        prev_intervals = [dict(iv) for iv in task.work_intervals]
+        prev_elapsed = task.elapsed_seconds
+        prev_alarm = task.last_alarm_level
+
+        if adding:
+            task.add_manual_minutes(minutes)
+            print(f"Added {minutes} min to '{task.name}' (now {task.elapsed_seconds / 60:.1f} min)")
+        else:
+            removed = task.subtract_manual_minutes(minutes)
+            removed_min = removed / 60
+            if removed < minutes * 60 - 1:
+                # Capped at the time actually spent — say so (never silently do less).
+                print(f"Removed {removed_min:.1f} min from '{task.name}' "
+                      f"(capped at time spent; now {task.elapsed_seconds / 60:.1f} min)")
+            else:
+                print(f"Removed {minutes} min from '{task.name}' (now {task.elapsed_seconds / 60:.1f} min)")
+
+        # Re-derive the alarm level from the new elapsed. Adding past work should
+        # not nag immediately; removing should re-arm a crossed alarm. check_alarm
+        # fires on int(ratio) > last_alarm_level, so:
+        if task.estimated_seconds > 0:
+            ratio = task.elapsed_seconds / task.estimated_seconds
+            new_level = int(ratio) if ratio >= 1.0 else 0
+            if adding:
+                task.last_alarm_level = max(prev_alarm, new_level)   # suppress an immediate re-alarm
+            else:
+                task.last_alarm_level = min(prev_alarm, new_level)   # allow a future re-crossing to alarm
+        else:
+            task.last_alarm_level = 0
+
+        self.undo_stack.append(UndoAction(
+            kind="adjust_time",
+            task=task,
+            prev_work_intervals=prev_intervals,
+            prev_last_alarm_level=prev_alarm,
+            prev_elapsed_seconds=prev_elapsed,
+        ))
+
+        save_active_tasks(self.tasks)
+        self.overlay.update_display()
+
+        # Restore focus to the app the user was in before adjusting time.
         if self.previous_app:
             self.previous_app.activateWithOptions_(1)
             self.previous_app = None

@@ -1,7 +1,7 @@
 """Data models for etime application."""
 
 from dataclasses import dataclass, field, asdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import Enum
 from typing import Optional, List
 import uuid
@@ -56,6 +56,104 @@ class Task:
         """Close the current open work interval (task paused/completed)."""
         if self.work_intervals and self.work_intervals[-1]["end"] is None:
             self.work_intervals[-1]["end"] = datetime.now().isoformat()
+
+    @staticmethod
+    def _interval_end(iv: dict, now: datetime) -> datetime:
+        """End of an interval, treating an open (running) interval as ending now."""
+        return datetime.fromisoformat(iv["end"]) if iv["end"] else now
+
+    def add_manual_minutes(self, minutes: int) -> dict:
+        """Backfill ``minutes`` of work ending now, attributed to [now - minutes, now].
+
+        Adds a closed work interval covering the last ``minutes`` minutes (this
+        feeds the dashboard's time-of-day view, so the time lands in the window
+        just before now) and bumps ``elapsed_seconds`` by exactly ``minutes``.
+
+        We add to the *prior* elapsed rather than re-derive purely from intervals:
+        a legacy task with no ``work_intervals`` carries its time in
+        ``elapsed_seconds`` (compute_elapsed's fallback), which adding an interval
+        would otherwise shadow away.
+
+        The interval is inserted *before* any trailing open interval, never after,
+        so the "open interval is always last" invariant that start_interval /
+        end_interval rely on is preserved. Returns the added interval dict.
+        """
+        now = datetime.now()
+        start = now - timedelta(minutes=minutes)
+        interval = {"start": start.isoformat(), "end": now.isoformat()}
+        prior = self.compute_elapsed()
+        if self.work_intervals and self.work_intervals[-1]["end"] is None:
+            # Keep the running (open) interval last.
+            self.work_intervals.insert(len(self.work_intervals) - 1, interval)
+        else:
+            self.work_intervals.append(interval)
+        self.elapsed_seconds = prior + minutes * 60
+        return interval
+
+    def subtract_manual_minutes(self, minutes: int) -> float:
+        """Remove up to ``minutes`` from the newest end of the timeline.
+
+        Trims work intervals from the most recent end backwards (so it undoes the
+        "latest" time, mirroring add), capped at the time actually spent — elapsed
+        never goes below zero. A running (open) interval is clamped forward, never
+        deleted, so the task keeps ticking. Returns the seconds actually removed,
+        which is less than requested when capped.
+        """
+        now = datetime.now()
+        req = minutes * 60
+
+        if not self.work_intervals:
+            # Legacy task: time lives only in elapsed_seconds, nothing to trim.
+            removed = min(req, self.elapsed_seconds)
+            self.elapsed_seconds = max(0.0, self.elapsed_seconds - removed)
+            return removed
+
+        def _dur(iv: dict) -> float:
+            start = datetime.fromisoformat(iv["start"])
+            return (self._interval_end(iv, now) - start).total_seconds()
+
+        interval_total = sum(_dur(iv) for iv in self.work_intervals)
+        budget = min(req, interval_total)
+        remaining = budget
+
+        # Process newest-end first. List order isn't chronological (backfills are
+        # inserted, not time-ordered), so sort by end descending rather than trust
+        # positional order.
+        order = sorted(
+            range(len(self.work_intervals)),
+            key=lambda i: self._interval_end(self.work_intervals[i], now),
+            reverse=True,
+        )
+        to_delete: set[int] = set()
+        for i in order:
+            if remaining <= 1e-9:
+                break
+            iv = self.work_intervals[i]
+            start = datetime.fromisoformat(iv["start"])
+            end = self._interval_end(iv, now)
+            dur = (end - start).total_seconds()
+            if iv["end"] is None:
+                # Open interval — clamp its start forward (never delete) so it
+                # stays open and keeps ticking.
+                trim = min(remaining, dur)
+                iv["start"] = min(now, start + timedelta(seconds=trim)).isoformat()
+                remaining -= trim
+            elif dur <= remaining + 1e-9:
+                to_delete.add(i)
+                remaining -= dur
+            else:
+                # Partial trim from this closed interval's end.
+                iv["end"] = (end - timedelta(seconds=remaining)).isoformat()
+                remaining = 0.0
+
+        if to_delete:
+            self.work_intervals = [
+                iv for j, iv in enumerate(self.work_intervals) if j not in to_delete
+            ]
+
+        removed = budget - remaining
+        self.elapsed_seconds = max(0.0, self.elapsed_seconds - removed)
+        return removed
 
     def compute_elapsed(self) -> float:
         """Compute elapsed seconds from work intervals (single source of truth).
