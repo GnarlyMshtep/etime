@@ -81,6 +81,7 @@ class DayRow:
     date: str
     seconds: float
     distractions: int
+    distraction_times: list[str]    # "HH:MM", for ticks on the timeline
     by_tag: dict[str, float]
     blocks: list[Block]
 
@@ -204,6 +205,7 @@ def build_review(
     active: list[dict],
     dates: list[date],
     distractions_by_day: dict[str, int],
+    distraction_times_by_day: Optional[dict[str, list[str]]] = None,
     now: Optional[datetime] = None,
 ) -> Review:
     """Aggregate everything the weekly-review UI needs for ``dates``."""
@@ -354,6 +356,7 @@ def build_review(
             date=d.isoformat(),
             seconds=round(union_seconds(day_ivs), 1),
             distractions=distractions_by_day.get(d.isoformat(), 0),
+            distraction_times=(distraction_times_by_day or {}).get(d.isoformat(), []),
             by_tag={k: round(v, 1) for k, v in by_tag.items()},
             blocks=blocks,
         ))
@@ -407,7 +410,13 @@ def build_review(
         for t in tasks if t.state != "completed" and t.seconds >= 300
     ]
 
-    tasks_completed = sum(1 for t in tasks if t.completed_at[:10] in day_isos)
+    # Count every completion in the range, including tasks whose work all
+    # happened earlier — otherwise this disagrees with the "Tasks completed"
+    # stat card sitting directly above it.
+    tasks_completed = sum(
+        1 for t in history
+        if (t.get("completed_at") or t.get("created_at", ""))[:10] in day_isos
+    )
     active_days = sum(1 for d in day_rows if d.seconds > 0)
 
     longest_focus = None

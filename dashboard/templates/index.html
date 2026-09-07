@@ -240,6 +240,7 @@
         .rv-tl-block { position: absolute; top: 3px; bottom: 3px; border-radius: 3px; overflow: hidden; font-size: 10px;
                        color: #fff; line-height: 20px; padding: 0 3px; white-space: nowrap; cursor: default; }
         .rv-tl-block.dim { opacity: 0.18; }
+        .rv-tl-tick { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--red); opacity: .55; }
 
         .rv-two { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
         @media (max-width: 860px) { .rv-two { grid-template-columns: 1fr; }
@@ -347,18 +348,17 @@
     <div id="dayView">
     <div class="stats-grid" id="statsGrid"></div>
 
-    <div class="section">
-        <h2>Time Breakdown</h2>
-        <div class="chart-container">
-            <canvas id="chart"></canvas>
-        </div>
+    <div class="section" id="sec-day-breakdown">
+        <h2>Where the day went</h2>
+        <div class="rv-controls" id="dayControls"></div>
+        <div class="rv-bars" id="dayBreakdown"></div>
+        <p class="cs-foot">Hours per high-level tag — the root of each task tree. Click a tag to open its tasks and highlight it in the timeline. All bars share one scale, so a task's bar is directly comparable to its tag's. Overlapping intervals inside a tag (a parent running alongside its own subtask) are counted once.</p>
     </div>
 
-    <div class="section">
-        <h2>Daily Timeline</h2>
-        <div class="chart-container" style="height: 200px;">
-            <canvas id="timelineChart"></canvas>
-        </div>
+    <div class="section" id="sec-day-timeline">
+        <h2>Timeline</h2>
+        <div class="rv-timeline" id="dayTimeline"></div>
+        <p class="cs-foot">Every recorded work interval at its real clock time, coloured by tag. Blocks under 90s are hidden (they still count in totals). Red ticks are logged distractions. Hover a block for the task.</p>
     </div>
 
     <div class="section">
@@ -376,12 +376,9 @@
                 <p class="cs-foot">A “switch” = moving from one task to a different one (resuming the same task isn’t a switch). Counted by the clock hour you switched into.</p>
             </div>
         </div>
-        <h3 class="chart-subtitle">Session timeline</h3>
-        <div class="chart-container" style="height: 130px;"><canvas id="csTimelineChart"></canvas></div>
-        <p class="cs-foot">Each bar is one continuous work session at its real clock time, colored per task. Pausing &amp; resuming the same task with nothing in between stays a single session; intervals under 1 min are dropped. Bars may overlap when multiple tasks ran at once.</p>
     </div>
 
-    <div class="section" id="activeSection" style="display:none;">
+    <div class="section" id="sec-active" style="display:none;">
         <h2>Active Tasks <span class="active-label">live</span></h2>
         <div class="active-section" id="activeTableContainer"></div>
     </div>
@@ -407,7 +404,7 @@
         <div class="stats-grid" id="rangeStatsGrid"></div>
 
         <div class="section" id="sec-breakdown">
-            <h2>Where the week went</h2>
+            <h2>Where the <span class="rv-period-word">week</span> went</h2>
             <div class="rv-controls" id="rvControls"></div>
             <div class="rv-bars" id="rvBreakdown"></div>
             <p class="cs-foot">Hours per high-level tag — the root of each task tree. Click a tag to open its tasks and highlight it in the timeline. All bars share one scale, so a task's bar is directly comparable to its tag's. Overlapping intervals inside a tag (a parent running alongside its own subtask) are counted once, so tag hours can sum to slightly more than the tracked total when two different tags overlapped.</p>
@@ -486,11 +483,8 @@
     <div class="refresh-note">Auto-refreshes every 60s</div>
 
     <script>
-    let chartInstance = null;
-    let timelineChartInstance = null;
     let csTaskChartInstance = null;
     let csHourChartInstance = null;
-    let csTimelineChartInstance = null;
     let currentPeriod = 'day';
     const rangeCharts = { time: null, switch: null, calib: null };
     let currentSort = { key: 'completed_at', asc: false };
@@ -522,9 +516,10 @@
         } catch { return ''; }
     }
 
-    function renderStats(stats) {
+    function renderStats(stats, review) {
         const grid = document.getElementById('statsGrid');
-        const totalHrs = (stats.total_elapsed_seconds / 3600).toFixed(1);
+        // Interval-clipped, overlaps merged — the same basis as the breakdown below.
+        const totalHrs = ((review ? review.tracked_seconds : stats.total_elapsed_seconds) / 3600).toFixed(1);
         const cards = [
             { value: stats.total_tasks, label: 'Tasks completed', cls: 'blue' },
             { value: `${totalHrs}h`, label: 'Total time', cls: '' },
@@ -539,221 +534,19 @@
                 cls: stats.ambitious_rate >= 0.5 ? 'green' : 'red'
             });
         }
+        if (review && review.longest_focus) {
+            cards.push({
+                value: fmtH(review.longest_focus.seconds),
+                label: `Longest unbroken block — ${review.longest_focus.name.slice(0, 34)}`,
+                cls: 'green',
+            });
+        }
         grid.innerHTML = cards.map(c => `
             <div class="stat-card ${c.cls}">
                 <div class="value">${c.value}</div>
                 <div class="label">${c.label}</div>
             </div>
         `).join('');
-    }
-
-    function renderChart(tasks) {
-        const ctx = document.getElementById('chart').getContext('2d');
-        if (chartInstance) chartInstance.destroy();
-        if (tasks.length === 0) {
-            ctx.font = '16px -apple-system, sans-serif';
-            ctx.fillStyle = '#888';
-            ctx.textAlign = 'center';
-            ctx.fillText('No tasks to chart', ctx.canvas.width / 2, 140);
-            return;
-        }
-
-        const labels = tasks.map(t => t.name);
-        const elapsed = tasks.map(t => t.elapsed_seconds / 60);
-        const estimated = tasks.map(t => t.estimated_seconds / 60);
-        const ambitious = tasks.map(t => t.ambitious_seconds ? t.ambitious_seconds / 60 : null);
-
-        const datasets = [
-            {
-                label: 'Elapsed (min)',
-                data: elapsed,
-                backgroundColor: tasks.map(t => t.overtime ? '#FFCDD2' : t.within_ambitious ? '#C8E6C9' : '#BBDEFB'),
-                borderColor: tasks.map(t => t.overtime ? '#D32F2F' : t.within_ambitious ? '#2E7D32' : '#2196F3'),
-                borderWidth: 1,
-            },
-            {
-                label: 'Estimated (min)',
-                data: estimated,
-                backgroundColor: 'rgba(0,0,0,0)',
-                borderColor: '#999999',
-                borderWidth: 2,
-                borderDash: [5, 3],
-            },
-        ];
-
-        // Only add ambitious dataset if any task has it
-        if (ambitious.some(a => a !== null)) {
-            datasets.push({
-                label: 'Ambitious (min)',
-                data: ambitious,
-                backgroundColor: 'rgba(0,0,0,0)',
-                borderColor: '#2E7D32',
-                borderWidth: 2,
-                borderDash: [2, 2],
-            });
-        }
-
-        chartInstance = new Chart(ctx, {
-            type: 'bar',
-            data: { labels, datasets },
-            options: {
-                indexAxis: 'y',
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: { position: 'bottom' },
-                    tooltip: {
-                        callbacks: {
-                            label: (c) => `${c.dataset.label}: ${c.raw !== null ? c.raw.toFixed(1) + 'm' : 'N/A'}`
-                        }
-                    }
-                },
-                scales: {
-                    x: { title: { display: true, text: 'Minutes' }, beginAtZero: true },
-                    y: { ticks: { font: { size: 13 } } }
-                }
-            }
-        });
-    }
-
-    function renderTimelineChart(tasks, distractions, deterred) {
-        const ctx = document.getElementById('timelineChart').getContext('2d');
-        if (timelineChartInstance) timelineChartInstance.destroy();
-
-        // Create hourly buckets (6am to midnight)
-        const hours = [];
-        for (let h = 6; h <= 23; h++) {
-            hours.push(h);
-        }
-        const labels = hours.map(h => `${h}:00`);
-
-        // Bucket work minutes by hour using work_intervals when available,
-        // falling back to completed_at for old tasks without intervals.
-        const workMinutes = hours.map(h => {
-            let mins = 0;
-            for (const t of tasks) {
-                if (t.work_intervals && t.work_intervals.length > 0) {
-                    // Distribute work time across actual working hours
-                    for (const iv of t.work_intervals) {
-                        if (!iv.start) continue;
-                        const start = new Date(iv.start);
-                        const end = iv.end ? new Date(iv.end) : new Date();
-                        // For each minute of the interval, bucket it
-                        const durationMs = end - start;
-                        if (durationMs <= 0) continue;
-                        // Compute overlap with hour h
-                        const hourStart = new Date(start);
-                        hourStart.setHours(h, 0, 0, 0);
-                        const hourEnd = new Date(start);
-                        hourEnd.setHours(h + 1, 0, 0, 0);
-                        const overlapStart = Math.max(start.getTime(), hourStart.getTime());
-                        const overlapEnd = Math.min(end.getTime(), hourEnd.getTime());
-                        if (overlapEnd > overlapStart) {
-                            mins += (overlapEnd - overlapStart) / 60000;
-                        }
-                    }
-                } else {
-                    // Legacy: attribute all time to the completion hour
-                    const completedAt = t.completed_at || t.created_at;
-                    if (!completedAt) continue;
-                    try {
-                        const d = new Date(completedAt);
-                        if (d.getHours() === h) {
-                            mins += t.elapsed_seconds / 60;
-                        }
-                    } catch {}
-                }
-            }
-            return Math.round(mins * 10) / 10;
-        });
-
-        // Bucket distractions by hour
-        const distractionCounts = hours.map(h => {
-            let count = 0;
-            for (const ts of distractions.timestamps) {
-                // ts is "HH:MM:SS" format
-                const hour = parseInt(ts.split(':')[0], 10);
-                if (hour === h) count++;
-            }
-            return count;
-        });
-
-        // Bucket deterred by hour
-        const deterredCounts = hours.map(h => {
-            let count = 0;
-            if (deterred && deterred.timestamps) {
-                for (const ts of deterred.timestamps) {
-                    const hour = parseInt(ts.split(':')[0], 10);
-                    if (hour === h) count++;
-                }
-            }
-            return count;
-        });
-
-        timelineChartInstance = new Chart(ctx, {
-            type: 'bar',
-            data: {
-                labels,
-                datasets: [
-                    {
-                        label: 'Work (min)',
-                        data: workMinutes,
-                        backgroundColor: '#BBDEFB',
-                        borderColor: '#2196F3',
-                        borderWidth: 1,
-                        yAxisID: 'y',
-                    },
-                    {
-                        label: 'Distractions',
-                        data: distractionCounts,
-                        type: 'line',
-                        borderColor: '#D32F2F',
-                        backgroundColor: 'rgba(211, 47, 47, 0.1)',
-                        fill: true,
-                        tension: 0.3,
-                        pointRadius: distractionCounts.map(c => c > 0 ? 5 : 0),
-                        pointBackgroundColor: '#D32F2F',
-                        yAxisID: 'y1',
-                    },
-                    {
-                        label: 'Deterred',
-                        data: deterredCounts,
-                        type: 'line',
-                        borderColor: '#2E7D32',
-                        backgroundColor: 'rgba(46, 125, 50, 0.1)',
-                        fill: true,
-                        tension: 0.3,
-                        pointRadius: deterredCounts.map(c => c > 0 ? 5 : 0),
-                        pointBackgroundColor: '#2E7D32',
-                        yAxisID: 'y1',
-                    }
-                ]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                interaction: { mode: 'index', intersect: false },
-                plugins: {
-                    legend: { position: 'bottom' },
-                },
-                scales: {
-                    x: { title: { display: true, text: 'Hour' } },
-                    y: {
-                        type: 'linear',
-                        position: 'left',
-                        title: { display: true, text: 'Minutes' },
-                        beginAtZero: true,
-                    },
-                    y1: {
-                        type: 'linear',
-                        position: 'right',
-                        title: { display: true, text: 'Distractions' },
-                        beginAtZero: true,
-                        grid: { drawOnChartArea: false },
-                    }
-                }
-            }
-        });
     }
 
     function sortTasks(tasks, key, asc) {
@@ -1000,67 +793,6 @@
 
         // 3) Session timeline as a Gantt — floating bars at real clock positions,
         //    one row per session (handles concurrent/overlapping tasks correctly).
-        const tlCtx = document.getElementById('csTimelineChart').getContext('2d');
-        const tlContainer = tlCtx.canvas.parentElement;
-        if (csTimelineChartInstance) csTimelineChartInstance.destroy();
-        const tl = ctx.timeline || [];
-        const fmtClock = (m) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(Math.floor(m % 60)).padStart(2, '0')}`;
-        if (tl.length === 0) {
-            tlContainer.style.height = '130px';
-            tlCtx.font = '14px -apple-system, sans-serif';
-            tlCtx.fillStyle = '#888';
-            tlCtx.textAlign = 'center';
-            tlCtx.fillText('No sessions to show', tlCtx.canvas.width / 2, 60);
-        } else {
-            const toMin = (iso) => { const d = new Date(iso); return d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60; };
-            const sessions = tl.map((s, i) => ({ s, i, start: toMin(s.start), end: toMin(s.end) }));
-            const labels = sessions.map((x) => wrapLabel(`${x.i + 1}. ${x.s.name}`));
-            // Size rows to fit wrapped label lines (~15px/line + per-row padding).
-            const totalLines = labels.reduce((a, l) => a + l.length, 0);
-            tlContainer.style.height = Math.max(130, totalLines * 15 + tl.length * 10 + 60) + 'px';
-            const lo = Math.min(...sessions.map(x => x.start));
-            const hi = Math.max(...sessions.map(x => x.end));
-            csTimelineChartInstance = new Chart(tlCtx, {
-                type: 'bar',
-                data: {
-                    labels,
-                    datasets: [{
-                        data: sessions.map(x => [x.start, Math.max(x.end, x.start + 0.5)]),
-                        backgroundColor: sessions.map(x => colorForName(x.s.name)),
-                        borderWidth: 0,
-                        barPercentage: 0.7,
-                        _sessions: sessions,
-                    }],
-                },
-                options: {
-                    indexAxis: 'y',
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        legend: { display: false },
-                        tooltip: {
-                            callbacks: {
-                                title: (items) => sessions[items[0].dataIndex].s.name,
-                                label: (item) => {
-                                    const x = sessions[item.dataIndex];
-                                    return `${fmtClock(x.start)}–${fmtClock(x.end)} (${Math.round(x.end - x.start)}m)`;
-                                },
-                            },
-                        },
-                    },
-                    scales: {
-                        x: {
-                            position: 'top',
-                            min: Math.floor(lo / 60) * 60,
-                            max: Math.ceil(hi / 60) * 60,
-                            ticks: { stepSize: 60, callback: (v) => fmtClock(v) },
-                            title: { display: true, text: 'Time of day' },
-                        },
-                        y: { ticks: { font: { size: 11 } } },
-                    },
-                },
-            });
-        }
     }
 
     // Format a YYYY-MM-DD into a compact axis label for the range views.
@@ -1269,11 +1001,14 @@
     let _rvShowAllTasks = false;          // expand every tag's full task list
     const _rvOpenTags = new Set();        // expanded tags — these also drive the timeline
     let _rvTaskSort = 'seconds';          // seconds | first_start | accuracy
+    // The Day and Week/Month views render the same breakdown + timeline into
+    // their own containers; whichever rendered last owns these ids.
+    let _rvIds = { controls: 'rvControls', bars: 'rvBreakdown', timeline: 'rvTimeline' };
+    function rvRerender() { renderRvBreakdown(); renderRvTimeline(); }
 
     function rvToggleTag(id) {
         if (_rvOpenTags.has(id)) _rvOpenTags.delete(id); else _rvOpenTags.add(id);
-        renderRvBreakdown();
-        renderRvTimeline();               // opening a tag highlights it in the timeline
+        rvRerender();                     // opening a tag also highlights it in the timeline
     }
     function rvToggleSmallTags() { _rvShowSmallTags = !_rvShowSmallTags; renderRvBreakdown(); }
     function rvSetTaskSort(key) { _rvTaskSort = key; renderRvBreakdown(); }
@@ -1281,8 +1016,7 @@
         _rvOpenTags.clear();
         _rvShowAllTasks = open;
         if (open) _rvData.tags.forEach(t => _rvOpenTags.add(t.id));
-        renderRvBreakdown();
-        renderRvTimeline();
+        rvRerender();
     }
 
     function rvTaskCmp(a, b) {
@@ -1292,7 +1026,7 @@
     }
 
     function renderRvControls() {
-        const el = document.getElementById('rvControls');
+        const el = document.getElementById(_rvIds.controls);
         const anyOpen = _rvOpenTags.size > 0;
         const btn = (key, label) =>
             `<button class="${_rvTaskSort === key ? 'on' : ''}" onclick="rvSetTaskSort('${key}')">${label}</button>`;
@@ -1308,7 +1042,7 @@
     // biggest single task, so each level is comparable within itself.
     function renderRvBreakdown() {
         renderRvControls();
-        const el = document.getElementById('rvBreakdown');
+        const el = document.getElementById(_rvIds.bars);
         const all = _rvData.tags;
         if (!all.length) { el.innerHTML = '<div class="empty-state">No tracked work in this range</div>'; return; }
 
@@ -1374,7 +1108,7 @@
     }
 
     function renderRvTimeline() {
-        const el = document.getElementById('rvTimeline');
+        const el = document.getElementById(_rvIds.timeline);
         const lo = _rvData.day_min_minute, hi = _rvData.day_max_minute;
         const span = Math.max(1, hi - lo);
         const pos = (m) => ((m - lo) / span * 100);
@@ -1402,10 +1136,15 @@
                      data-name="${esc(b.name)}" data-tag="${esc(b.tag)}"
                      data-when="${t}–${end.slice(11)}" data-dur="${fmtH(b.minutes * 60)}">${label}</div>`;
             }).join('');
+            const ticks = (d.distraction_times || []).map(t => {
+                const m = Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5));
+                if (m < lo || m > hi) return '';
+                return `<div class="rv-tl-tick" style="left:${pos(m).toFixed(2)}%" title="distraction ${t}"></div>`;
+            }).join('');
             const hrs = d.seconds > 0 ? fmtH(d.seconds) : '—';
             return `<div class="rv-tl-day">
                 <div class="rv-tl-label"><b>${wd} ${dd}</b> · ${hrs}</div>
-                <div class="rv-tl-track">${grid}${blocks}</div>
+                <div class="rv-tl-track">${grid}${blocks}${ticks}</div>
             </div>`;
         }).join('');
         el.innerHTML = `<div class="rv-tl-hours">${ruler}</div>${rows}`;
@@ -1414,7 +1153,7 @@
     // Delegated hover — blocks can be 3px wide, so a real tooltip beats title=.
     (function wireTimelineTooltip() {
         const tip = document.getElementById('rvTooltip');
-        const host = document.getElementById('rvTimeline');
+        const host = document;              // both views render blocks; delegate globally
         host.addEventListener('mouseover', (e) => {
             const b = e.target.closest('.rv-tl-block');
             if (!b) return;
@@ -1565,8 +1304,12 @@
         banner.style.display = (!(mine.text || '').trim() && data.period === 'week') ? '' : 'none';
     }
 
+    const RV_PERIOD_WORD = { day: 'day', week: 'week', month: 'month' };
+
     function renderReview(data) {
         _rvData = data.review;
+        document.querySelectorAll('.rv-period-word').forEach(
+            el => { el.textContent = RV_PERIOD_WORD[data.period] || 'week'; });
         _rvPeriodKey = `${data.period}-${data.start}`;
         _rvColors = {};
         _rvData.tags.forEach((t, i) => { _rvColors[t.id] = RV_PALETTE[i % RV_PALETTE.length]; });
@@ -1579,7 +1322,8 @@
         rvEstTable(_rvData.wins, 'rvWins', 'under');
         renderRvLoose();
         document.getElementById('rvSummary').textContent = _rvData.summary_text;
-        renderRvMine(data);
+        // The writing box belongs to the week/month view only.
+        if (data.period !== 'day') renderRvMine(data);
         const foot = document.getElementById('rvNoIntervalNote');
         if (_rvData.no_interval_tasks > 0) {
             foot.style.display = '';
@@ -1742,19 +1486,23 @@
         document.title = `etime dashboard — ${data.date}`;
         if (datePicker.value !== data.date) datePicker.value = data.date;
 
-        renderStats(data.stats);
-        renderChart(data.tasks);
-        renderTimelineChart(data.tasks, data.distractions, data.deterred);
         renderContextSwitching(data.context);
+
+        // Same breakdown + timeline the week/month views use, for one day.
+        _rvIds = { controls: 'dayControls', bars: 'dayBreakdown', timeline: 'dayTimeline' };
+        const rangeRes = await fetch(`/api/range?period=day&date=${data.date}`);
+        const rangeData = await rangeRes.json();
+        renderReview(rangeData);
+        renderStats(data.stats, rangeData.review);
 
         _allTasks = data.tasks;
         renderTable(data.tasks, 'taskTableContainer', true);
 
         if (data.active_tasks.length > 0) {
-            document.getElementById('activeSection').style.display = '';
+            document.getElementById('sec-active').style.display = '';
             renderTable(data.active_tasks, 'activeTableContainer', false);
         } else {
-            document.getElementById('activeSection').style.display = 'none';
+            document.getElementById('sec-active').style.display = 'none';
         }
 
         window._deterredData = data.deterred;
@@ -1770,6 +1518,7 @@
             if (isDay) {
                 await fetchAndRenderDay(selectedDate);
             } else {
+                _rvIds = { controls: 'rvControls', bars: 'rvBreakdown', timeline: 'rvTimeline' };
                 const q = selectedDate ? `&date=${selectedDate}` : '';
                 const res = await fetch(`/api/range?period=${currentPeriod}${q}`);
                 renderRange(await res.json());

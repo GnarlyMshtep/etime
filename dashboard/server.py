@@ -342,22 +342,33 @@ def api_data():
 def _range_dates(anchor: date, period: str) -> list[date]:
     """Return the list of dates in the period containing ``anchor``.
 
+    day   -> just the anchor.
     week  -> Monday..Sunday containing anchor.
     month -> 1st..last day of anchor's calendar month.
+
+    Days after today are dropped: rendering the 24 empty future days of the
+    current month as "no activity" reads as broken data, not as the future.
     """
+    if period == "day":
+        return [anchor]
     if period == "month":
         start = anchor.replace(day=1)
         n = calendar.monthrange(anchor.year, anchor.month)[1]
-        return [start + timedelta(days=i) for i in range(n)]
-    start = anchor - timedelta(days=anchor.weekday())  # Monday
-    return [start + timedelta(days=i) for i in range(7)]
+        dates = [start + timedelta(days=i) for i in range(n)]
+    else:
+        start = anchor - timedelta(days=anchor.weekday())  # Monday
+        dates = [start + timedelta(days=i) for i in range(7)]
+    today = date.today()
+    if dates[0] <= today <= dates[-1]:
+        dates = [d for d in dates if d <= today]
+    return dates
 
 
 @app.route("/api/range")
 def api_range():
     """Aggregate stats across a week or month for the global view."""
     period = request.args.get("period", "week")
-    if period not in ("week", "month"):
+    if period not in ("day", "week", "month"):
         period = "week"
 
     date_param = request.args.get("date")
@@ -397,12 +408,16 @@ def api_range():
         })
         all_tasks.extend(day_tasks)
 
-    distractions_by_day = {d.isoformat(): _load_distractions(d)["count"] for d in dates}
+    distraction_days = {d.isoformat(): _load_distractions(d) for d in dates}
+    distractions_by_day = {k: v["count"] for k, v in distraction_days.items()}
     review = build_review(
         history=history,
         active=active,
         dates=dates,
         distractions_by_day=distractions_by_day,
+        distraction_times_by_day={
+            k: [t[:5] for t in v["timestamps"]] for k, v in distraction_days.items()
+        },
     )
     # Interval-clipped hours: time is credited to the day it was actually worked,
     # not to the day the task happened to be completed on.
