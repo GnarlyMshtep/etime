@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.matan.etime-weekly-summary</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/matanshtepel/Dev/etime/.venv/bin/python</string>
+        <string>/Users/matanshtepel/Dev/etime/weekly_summary_reminder.py</string>
+    </array>
+
+    <!-- Sunday afternoon, again Sunday evening, and a Monday-morning catch-up.
+         The script exits silently once the summary has text, so the extra
+         firings only matter if the Mac was asleep for the first one. -->
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict><key>Weekday</key><integer>0</integer><key>Hour</key><integer>15</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Weekday</key><integer>0</integer><key>Hour</key><integer>20</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>10</integer><key>Minute</key><integer>0</integer></dict>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/matanshtepel/.etime/weekly-summary.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/matanshtepel/.etime/weekly-summary.log</string>
+</dict>
+</plist>

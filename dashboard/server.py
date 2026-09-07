@@ -10,10 +10,13 @@ from typing import Optional
 
 from flask import Flask, jsonify, render_template, request
 
+from .review import build_review, review_to_dict
+
 # Resolve paths without importing config (avoids PyQt6 dependency chain)
 ETIME_DIR = Path.home() / ".etime"
 HISTORY_FILE = ETIME_DIR / "history.jsonl"
 ACTIVE_FILE = ETIME_DIR / "active.json"
+SUMMARY_FILE = ETIME_DIR / "weekly_summaries.json"
 DISTRACTION_FILE = Path.home() / "Dev" / "DistractionCount" / "distraction_count.txt"
 DETERRED_FILE = Path.home() / "Dev" / "DistractionCount" / "deterred_count.txt"
 
@@ -394,7 +397,20 @@ def api_range():
         })
         all_tasks.extend(day_tasks)
 
-    distractions_total = sum(_load_distractions(d)["count"] for d in dates)
+    distractions_by_day = {d.isoformat(): _load_distractions(d)["count"] for d in dates}
+    review = build_review(
+        history=history,
+        active=active,
+        dates=dates,
+        distractions_by_day=distractions_by_day,
+    )
+    # Interval-clipped hours: time is credited to the day it was actually worked,
+    # not to the day the task happened to be completed on.
+    tracked_by_day = {day.date: day.seconds for day in review.days}
+    for row in daily:
+        row["tracked_hours"] = round(tracked_by_day.get(row["date"], 0.0) / 3600, 2)
+
+    distractions_total = sum(distractions_by_day.values())
     deterred_total = sum(_load_deterred(d)["count"] for d in dates)
     stats = _compute_stats(all_tasks, {"count": distractions_total}, {"count": deterred_total})
     stats["total_switches"] = total_switches
@@ -419,7 +435,54 @@ def api_range():
         "stats": stats,
         "daily": daily,
         "calibration": calibration,
+        "review": review_to_dict(review),
+        "summary": _load_summaries().get(
+            _summary_key(period, dates[0]), {"text": "", "updated_at": ""}
+        ),
     })
+
+
+def _summary_key(period: str, start: date) -> str:
+    """Storage key for one period's written summary, e.g. ``week-2026-08-31``."""
+    return f"{period}-{start.isoformat()}"
+
+
+def _load_summaries() -> dict:
+    """All written summaries, keyed by ``_summary_key``."""
+    if not SUMMARY_FILE.exists():
+        return {}
+    try:
+        with open(SUMMARY_FILE, "r") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _save_summary(key: str, text: str) -> dict:
+    """Write one summary, preserving the rest of the file. Returns the entry."""
+    summaries = _load_summaries()
+    entry = {"text": text, "updated_at": datetime.now().isoformat(timespec="seconds")}
+    summaries[key] = entry
+    tmp = SUMMARY_FILE.with_suffix(".json.tmp")
+    with open(tmp, "w") as f:
+        json.dump(summaries, f, indent=2, ensure_ascii=False)
+    tmp.replace(SUMMARY_FILE)
+    return entry
+
+
+@app.route("/api/summary", methods=["GET", "POST"])
+def api_summary():
+    """Read or write the user's own written summary for one period."""
+    if request.method == "GET":
+        key = request.args.get("key", "")
+        return jsonify(_load_summaries().get(key, {"text": "", "updated_at": ""}))
+
+    payload = request.get_json(silent=True) or {}
+    key = str(payload.get("key", "")).strip()
+    if not key:
+        return jsonify({"error": "missing key"}), 400
+    return jsonify(_save_summary(key, str(payload.get("text", ""))))
 
 
 def main():

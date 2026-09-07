@@ -217,9 +217,123 @@
         }
         .date-subtitle input[type="date"]:hover { color: var(--accent); }
         .date-subtitle input[type="date"]:focus { outline: none; color: var(--text); }
+
+        /* ---- Weekly review ---- */
+        .rv-bars { background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px; padding: 14px 18px; }
+        .rv-bar-row { display: grid; grid-template-columns: 14px 200px 1fr 150px; gap: 12px; align-items: center; padding: 5px 0; cursor: pointer; border-radius: 6px; }
+        .rv-bar-row:hover { background: #fafafa; }
+        .rv-bar-row.dim { opacity: 0.35; }
+        .rv-bar-row .nm { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .rv-bar-track { background: #f2f2f2; border-radius: 4px; height: 16px; overflow: hidden; }
+        .rv-bar-fill { height: 100%; border-radius: 4px; }
+        .rv-bar-row .val { font-size: 12px; color: var(--text-muted); text-align: right; white-space: nowrap; }
+        .rv-bar-row .val b { color: var(--text); font-size: 13px; }
+
+        .rv-timeline { background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px; padding: 14px 18px; }
+        .rv-tl-hours { display: flex; margin-left: 108px; height: 14px; position: relative; }
+        .rv-tl-hours span { position: absolute; font-size: 10px; color: var(--text-muted); transform: translateX(-50%); }
+        .rv-tl-day { display: grid; grid-template-columns: 108px 1fr; gap: 8px; align-items: center; margin: 3px 0; }
+        .rv-tl-label { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+        .rv-tl-label b { color: var(--text); }
+        .rv-tl-track { position: relative; height: 26px; background: #f7f7f7; border-radius: 4px; overflow: hidden; }
+        .rv-tl-track .gl { position: absolute; top: 0; bottom: 0; width: 1px; background: #ececec; }
+        .rv-tl-block { position: absolute; top: 3px; bottom: 3px; border-radius: 3px; overflow: hidden; font-size: 10px;
+                       color: #fff; line-height: 20px; padding: 0 3px; white-space: nowrap; cursor: default; }
+        .rv-tl-block.dim { opacity: 0.18; }
+
+        .rv-two { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        @media (max-width: 860px) { .rv-two { grid-template-columns: 1fr; }
+                                    .rv-bar-row { grid-template-columns: 14px 130px 1fr 110px; } }
+        .rv-tagchip { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 11px; color: #fff; max-width: 160px;
+                      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
+        .rv-more { font-size: 13px; color: var(--accent); cursor: pointer; margin-top: 8px; display: inline-block; }
+        .rv-more:hover { text-decoration: underline; }
+        .rv-summary-box { position: relative; }
+        .rv-summary-box pre { background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px;
+                              padding: 18px; font-size: 12.5px; line-height: 1.55; white-space: pre-wrap;
+                              font-family: ui-monospace, SFMono-Regular, Menlo, monospace; max-height: 460px; overflow: auto; }
+        .rv-copy { position: absolute; top: 10px; right: 10px; background: var(--accent); color: #fff; border: none;
+                   border-radius: 6px; padding: 5px 12px; font-family: inherit; font-size: 12px; cursor: pointer; }
+        .rv-copy:hover { filter: brightness(1.05); }
+        #rvTooltip {
+            position: fixed; z-index: 50; pointer-events: none; display: none;
+            background: #2b2620; color: #fdfaf4; border-radius: 7px; padding: 8px 11px;
+            font-size: 12px; line-height: 1.45; max-width: 320px;
+            box-shadow: 0 4px 14px rgba(0,0,0,.22);
+        }
+        #rvTooltip .t { font-weight: 600; margin-bottom: 3px; }
+        #rvTooltip .m { opacity: .75; }
+        .rv-tl-block { transition: filter .08s; }
+        .rv-tl-block:hover { filter: brightness(1.15); box-shadow: 0 0 0 1.5px rgba(0,0,0,.35); }
+        tr.rv-group td { background: #FBF8F2; font-weight: 600; font-size: 12px; color: var(--text-muted);
+                         border-bottom: 1px solid var(--border); }
+        tr.rv-group:hover td { background: #FBF8F2; }
+        td.rv-child { padding-left: 26px; }
+        .rv-caret { font-size: 10px; color: var(--text-muted); cursor: pointer; user-select: none; text-align: center; }
+        .rv-caret:hover { color: var(--accent); }
+        .rv-caret.placeholder { cursor: default; }
+        .rv-subtask { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-muted);
+                      padding: 2px 0 2px 236px; }
+        @media (max-width: 860px) { .rv-subtask { padding-left: 150px; } }
+        .rv-subtask .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 12px; }
+        .rv-filter-note { font-size: 12px; color: var(--accent); margin-bottom: 8px; display: none; }
+
+        .rv-banner { background: linear-gradient(180deg,#FFF6E8,#FFEFD6); border: 1px solid #F0D5A8; border-radius: 10px;
+                     padding: 14px 18px; margin-bottom: 20px; font-size: 14px; display: flex; align-items: center; gap: 12px; }
+        .rv-banner .grow { flex: 1; }
+        .rv-banner button { background: var(--accent); color: #fff; border: none; border-radius: 6px; padding: 7px 16px;
+                            font-family: inherit; font-size: 13px; cursor: pointer; }
+        .rv-write { background: #FFFDF7; border: 1px solid #E8DFCC; border-radius: 12px; padding: 4px 6px 6px;
+                    box-shadow: 0 1px 3px rgba(120,90,40,.06); }
+        #rvEditor {
+            width: 100%; min-height: 340px; resize: vertical; border: none; outline: none; background: transparent;
+            font-family: Iowan Old Style, Palatino, Georgia, serif; font-size: 16.5px; line-height: 1.75;
+            color: #3b3227; padding: 18px 22px; caret-color: var(--accent);
+        }
+        #rvEditor::placeholder { color: #b6ab99; font-style: italic; }
+        .rv-write-bar { display: flex; align-items: center; gap: 12px; padding: 8px 14px 6px; border-top: 1px solid #EFE7D6;
+                        font-size: 12px; color: var(--text-muted); }
+        .rv-write-bar .grow { flex: 1; }
+        .rv-write-bar button { background: transparent; border: 1px solid var(--border); color: var(--text-muted);
+                               border-radius: 6px; padding: 4px 12px; font-family: inherit; font-size: 12px; cursor: pointer; }
+        .rv-write-bar button:hover { border-color: var(--accent); color: var(--accent); }
+        .rv-calib-stats { font-size: 13px; color: var(--text-muted); margin: 10px 2px 0; }
+        .rv-calib-stats b { color: var(--text); }
+
+        /* ---- section sidebar ---- */
+        #rvNav {
+            position: fixed; top: 90px; left: 20px; width: 168px; z-index: 20;
+            font-size: 12.5px; line-height: 1.5; display: none;
+        }
+        #rvNav a {
+            display: block; padding: 5px 10px; color: var(--text-muted); text-decoration: none;
+            border-left: 2px solid transparent; border-radius: 0 5px 5px 0;
+        }
+        #rvNav a:hover { color: var(--text); background: #f2efe9; }
+        #rvNav a.on { color: var(--accent); border-left-color: var(--accent); background: #FFF6E8; font-weight: 600; }
+        @media (min-width: 1500px) { #rvNav.ready { display: block; } }
+
+        .rv-controls { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; font-size: 12px; }
+        .rv-controls .lbl { color: var(--text-muted); margin-right: 2px; }
+        .rv-controls .grow { flex: 1; }
+        .rv-controls button {
+            background: var(--card-bg); border: 1px solid var(--border); color: var(--text-muted);
+            border-radius: 6px; padding: 3px 11px; font-family: inherit; font-size: 12px; cursor: pointer;
+        }
+        .rv-controls button:hover { border-color: var(--accent); color: var(--accent); }
+        .rv-controls button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+        .rv-bar-row.open { background: #FBF8F2; }
+        .rv-bar-row.task { cursor: default; padding-left: 22px; }
+        .rv-bar-row.task:hover { background: #fbfbfb; }
+        .rv-bar-row.task .nm { font-size: 12.5px; color: #555; }
+        .rv-bar-row.task .val { font-size: 11.5px; }
+        .rv-bar-track.thin { height: 10px; background: #f6f6f6; }
+        .rv-more.indent { margin-left: 236px; font-size: 12px; }
     </style>
 </head>
 <body>
+    <nav id="rvNav" aria-label="Sections"></nav>
     <h1>etime dashboard</h1>
     <div class="date-subtitle">
         <input type="date" id="datePicker" value="{{ date_str }}">
@@ -285,27 +399,90 @@
 
     <div id="rangeView" style="display:none;">
         <div class="cs-summary" id="rangeSummary"></div>
+        <div class="rv-banner" id="rvBanner" style="display:none;">
+            <span class="grow"><b>No summary written for this week yet.</b></span>
+            <button onclick="rvFocusEditor()">Write it now</button>
+        </div>
+        <p class="cs-foot" id="rvNoIntervalNote" style="display:none;color:var(--red);opacity:1;margin-bottom:12px"></p>
         <div class="stats-grid" id="rangeStatsGrid"></div>
 
-        <div class="section">
-            <h2>Time tracked per day</h2>
-            <div class="chart-container"><canvas id="rangeTimeChart"></canvas></div>
-            <p class="cs-foot">Sum of elapsed time on tasks completed each day. Days with no completed tasks show as empty.</p>
+        <div class="section" id="sec-breakdown">
+            <h2>Where the week went</h2>
+            <div class="rv-controls" id="rvControls"></div>
+            <div class="rv-bars" id="rvBreakdown"></div>
+            <p class="cs-foot">Hours per high-level tag — the root of each task tree. Click a tag to open its tasks and highlight it in the timeline. All bars share one scale, so a task's bar is directly comparable to its tag's. Overlapping intervals inside a tag (a parent running alongside its own subtask) are counted once, so tag hours can sum to slightly more than the tracked total when two different tags overlapped.</p>
         </div>
 
-        <div class="section">
+        <div class="section" id="sec-timeline">
+            <h2>Timeline</h2>
+            <div class="rv-timeline" id="rvTimeline"></div>
+            <p class="cs-foot">Every recorded work interval, placed on the day and hour it actually happened. Blocks under 90s are hidden (they still count in totals). Hover a block for the task.</p>
+        </div>
+
+        <div class="section" id="sec-estimates">
+            <div class="rv-two">
+                <div>
+                    <h2>Ran long</h2>
+                    <div id="rvOverruns"></div>
+                </div>
+                <div>
+                    <h2>Came in under</h2>
+                    <div id="rvWins"></div>
+                </div>
+            </div>
+            <p class="cs-foot">Tasks completed in this range with an estimate of 15 min or more (shorter estimates make the ratio noise). Compared against the task's lifetime elapsed, not just the part inside this range.</p>
+        </div>
+
+        <div class="section" id="sec-loose">
+            <h2>Carrying over</h2>
+            <div id="rvLoose"></div>
+            <p class="cs-foot">Tasks worked on in this range that are still open (ongoing, paused, or stashed).</p>
+        </div>
+
+        <div class="section" id="sec-write">
+            <h2>Your summary</h2>
+            <div class="rv-write">
+                <textarea id="rvEditor" placeholder="So, what happened this week?&#10;&#10;(saves itself — ⌘S to save right now)"
+                          oninput="rvEditorInput()" onblur="rvSaveSummary()"></textarea>
+                <div class="rv-write-bar">
+                    <span id="rvWords">0 words</span>
+                    <span class="grow"></span>
+                    <span id="rvSaveState"></span>
+                    <button onclick="rvInsertDraft()">Insert draft ↓</button>
+                </div>
+            </div>
+            <p class="cs-foot">Stored in <code>~/.etime/weekly_summaries.json</code>, one entry per period — so it rides along with the hourly backup of <code>~/.etime</code>.</p>
+        </div>
+
+        <div class="section" id="sec-draft">
+            <h2>Draft summary</h2>
+            <div class="rv-summary-box">
+                <button class="rv-copy" id="rvCopyBtn">Copy</button>
+                <pre id="rvSummary"></pre>
+            </div>
+        </div>
+
+        <div class="section" id="sec-perday">
+            <h2 id="sec-perday-h">Hours per day, by tag</h2>
+            <div class="chart-container"><canvas id="rangeTimeChart"></canvas></div>
+            <p class="cs-foot">Work intervals credited to the day they actually happened (a task spanning several days is split across them), stacked by high-level tag. This is the interval-clipped basis — it will not match a &ldquo;time of tasks completed that day&rdquo; number.</p>
+        </div>
+
+        <div class="section" id="sec-switches">
             <h2>Context switches per day</h2>
             <div class="chart-container"><canvas id="rangeSwitchChart"></canvas></div>
             <p class="cs-foot">Daily count of moves between different tasks (resuming the same task isn’t a switch; work intervals under 1 min ignored). Grey hatched bars mark days that had activity but no recorded interval data (before interval tracking existed).</p>
         </div>
 
-        <div class="section">
+        <div class="section" id="sec-calib">
             <h2>Estimation calibration</h2>
             <div class="chart-container"><canvas id="rangeCalibChart"></canvas></div>
+            <div class="rv-calib-stats" id="rvCalibStats"></div>
             <p class="cs-foot">Each point is one completed task: estimated time (x) vs actual elapsed (y). Points on the dashed line were estimated perfectly; above it ran over, below came in under.</p>
         </div>
     </div><!-- /#rangeView -->
 
+    <div id="rvTooltip"></div>
     <div class="refresh-note">Auto-refreshes every 60s</div>
 
     <script>
@@ -894,9 +1071,10 @@
         return period === 'month' ? String(d) : `${wd} ${d}`;
     }
 
-    function renderRangeStats(stats) {
+    function renderRangeStats(stats, review) {
         const grid = document.getElementById('rangeStatsGrid');
-        const totalHrs = (stats.total_elapsed_seconds / 3600).toFixed(1);
+        // Interval-clipped, overlaps merged — the same basis as the review below.
+        const totalHrs = ((review ? review.tracked_seconds : stats.total_elapsed_seconds) / 3600).toFixed(1);
         const cards = [
             { value: `${totalHrs}h`, label: 'Total time tracked', cls: '' },
             { value: stats.total_tasks, label: 'Tasks completed', cls: 'blue' },
@@ -907,6 +1085,13 @@
         ];
         if (stats.ambitious_tasks > 0) {
             cards.push({ value: `${stats.ambitious_within}/${stats.ambitious_tasks}`, label: 'Ambitious goals hit', cls: stats.ambitious_rate >= 0.5 ? 'green' : 'red' });
+        }
+        if (review && review.longest_focus) {
+            cards.push({
+                value: fmtH(review.longest_focus.seconds),
+                label: `Longest unbroken block — ${review.longest_focus.name.slice(0, 34)}`,
+                cls: 'green',
+            });
         }
         grid.innerHTML = cards.map(c => `
             <div class="stat-card ${c.cls}">
@@ -1043,15 +1228,510 @@
         });
     }
 
+
+    // ------------------------------------------------------------------ //
+    // Weekly review
+    // ------------------------------------------------------------------ //
+    const RV_PALETTE = ['#E67E22','#3B82C4','#2E9E63','#8E5FBF','#D8544F','#12968C',
+                        '#C9A227','#4C6478','#B4552A','#9AA0A6'];
+    let _rvData = null;
+    let _rvColors = {};
+    let _rvSaveTimer = null;
+    let _rvPeriodKey = '';
+
+    function esc(str) {
+        return String(str == null ? '' : str)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+    }
+
+    function fmtH(seconds) {
+        const total = Math.round(seconds / 60);
+        const h = Math.floor(total / 60), m = total % 60;
+        return h ? `${h}h ${String(m).padStart(2, '0')}m` : `${m}m`;
+    }
+
+    function rvColor(tagId) { return _rvColors[tagId] || '#9AA0A6'; }
+
+    function clockLabel(minute) {
+        const h = Math.floor(minute / 60) % 24;
+        const ampm = h >= 12 ? 'p' : 'a';
+        const h12 = h % 12 === 0 ? 12 : h % 12;
+        return `${h12}${ampm}`;
+    }
+
+    // Tags under 5 min are one-off errands, not projects — they'd bury the real
+    // ones under a 20-row tail, so they collapse into a single expandable row.
+    const RV_SMALL_TAG_SECONDS = 300;
+    const RV_TASKS_PER_TAG = 6;
+
+    let _rvShowSmallTags = false;
+    let _rvShowAllTasks = false;          // expand every tag's full task list
+    const _rvOpenTags = new Set();        // expanded tags — these also drive the timeline
+    let _rvTaskSort = 'seconds';          // seconds | first_start | accuracy
+
+    function rvToggleTag(id) {
+        if (_rvOpenTags.has(id)) _rvOpenTags.delete(id); else _rvOpenTags.add(id);
+        renderRvBreakdown();
+        renderRvTimeline();               // opening a tag highlights it in the timeline
+    }
+    function rvToggleSmallTags() { _rvShowSmallTags = !_rvShowSmallTags; renderRvBreakdown(); }
+    function rvSetTaskSort(key) { _rvTaskSort = key; renderRvBreakdown(); }
+    function rvExpandAll(open) {
+        _rvOpenTags.clear();
+        _rvShowAllTasks = open;
+        if (open) _rvData.tags.forEach(t => _rvOpenTags.add(t.id));
+        renderRvBreakdown();
+        renderRvTimeline();
+    }
+
+    function rvTaskCmp(a, b) {
+        if (_rvTaskSort === 'first_start') return a.first_start < b.first_start ? -1 : 1;
+        if (_rvTaskSort === 'accuracy') return (b.accuracy || 0) - (a.accuracy || 0);
+        return b.seconds - a.seconds;
+    }
+
+    function renderRvControls() {
+        const el = document.getElementById('rvControls');
+        const anyOpen = _rvOpenTags.size > 0;
+        const btn = (key, label) =>
+            `<button class="${_rvTaskSort === key ? 'on' : ''}" onclick="rvSetTaskSort('${key}')">${label}</button>`;
+        el.innerHTML =
+            `<span class="lbl">Tasks inside a tag:</span>` +
+            btn('seconds', 'by time') + btn('first_start', 'by when') + btn('accuracy', 'by overrun') +
+            `<span class="grow"></span>` +
+            `<button onclick="rvExpandAll(${anyOpen ? 'false' : 'true'})">${anyOpen ? 'collapse all' : 'expand all'}</button>`;
+    }
+
+    // One list, two levels: tags with bars, and — when opened — their tasks with
+    // bars of their own. Tag bars scale to the biggest tag, task bars to the
+    // biggest single task, so each level is comparable within itself.
+    function renderRvBreakdown() {
+        renderRvControls();
+        const el = document.getElementById('rvBreakdown');
+        const all = _rvData.tags;
+        if (!all.length) { el.innerHTML = '<div class="empty-state">No tracked work in this range</div>'; return; }
+
+        const small = all.filter(t => t.seconds < RV_SMALL_TAG_SECONDS);
+        const tags = _rvShowSmallTags ? all : all.filter(t => t.seconds >= RV_SMALL_TAG_SECONDS);
+        const denom = _rvData.tag_seconds_total || 1;
+        // One scale for both levels: a task's bar is directly comparable to its
+        // parent tag's and to every other bar on the page. Two scales made a
+        // 2h task inside a 24h tag look nearly as long as the tag itself.
+        const scale = all[0].seconds || 1;
+
+        const byTag = new Map();
+        for (const t of _rvData.tasks) {
+            if (!byTag.has(t.tag_id)) byTag.set(t.tag_id, []);
+            byTag.get(t.tag_id).push(t);
+        }
+
+        el.innerHTML = tags.map(tag => {
+            const isProject = tag.task_count > 1 || tag.has_children;
+            const open = _rvOpenTags.has(tag.id);
+            const caret = `<span class="rv-caret">${open ? '▾' : '▸'}</span>`;
+            const count = isProject
+                ? `${tag.task_count} task${tag.task_count === 1 ? '' : 's'}`
+                : '<span style="opacity:.7">standalone</span>';
+            const head = `<div class="rv-bar-row${open ? ' open' : ''}" onclick="rvToggleTag('${tag.id}')"
+                 title="click to open this tag and highlight it in the timeline">
+                ${caret}
+                <div class="nm">${esc(tag.name)}</div>
+                <div class="rv-bar-track"><div class="rv-bar-fill" style="width:${(tag.seconds / scale * 100).toFixed(1)}%;background:${rvColor(tag.id)}"></div></div>
+                <div class="val"><b>${fmtH(tag.seconds)}</b> · ${(tag.seconds / denom * 100).toFixed(0)}% · ${count}</div>
+            </div>`;
+            if (!open) return head;
+
+            const rows = [...(byTag.get(tag.id) || [])].sort(rvTaskCmp);
+            const visible = _rvShowAllTasks ? rows : rows.slice(0, RV_TASKS_PER_TAG);
+            const hidden = rows.length - visible.length;
+            const kids = visible.map(t => {
+                const when = t.days.length === 1
+                    ? new Date(t.first_start).toLocaleDateString(undefined, { weekday: 'short' })
+                    : `${t.days.length}d`;
+                const ratio = t.estimated_seconds > 0
+                    ? `<span class="${t.overtime ? 'overtime' : t.within_ambitious ? 'within-ambitious' : ''}">${pct(t.accuracy)}</span> of ${fmtShort(t.estimated_seconds)}`
+                    : 'no estimate';
+                const openBadge = t.state !== 'completed' ? ' <span class="badge badge-gray">open</span>' : '';
+                return `<div class="rv-bar-row task" title="${esc(t.name)}">
+                    <span class="rv-caret placeholder"></span>
+                    <div class="nm">${t.is_root ? '' : '↳ '}${esc(t.name)}${openBadge}</div>
+                    <div class="rv-bar-track thin"><div class="rv-bar-fill" style="width:${Math.max(0.25, t.seconds / scale * 100).toFixed(2)}%;background:${rvColor(tag.id)};opacity:.62"></div></div>
+                    <div class="val"><b>${fmtH(t.seconds)}</b> · ${ratio} · ${when} ${t.first_start.slice(11, 16)}</div>
+                </div>`;
+            }).join('');
+            const more = hidden > 0
+                ? `<div class="rv-more indent" onclick="_rvShowAllTasks=true;renderRvBreakdown()">▼ ${hidden} more in ${esc(tag.name)}</div>`
+                : '';
+            return head + kids + more;
+        }).join('') + (
+            small.length && !_rvShowSmallTags
+                ? `<div class="rv-more" onclick="rvToggleSmallTags()">▼ ${small.length} tag${small.length === 1 ? '' : 's'} under 5 min (${fmtH(small.reduce((a, t) => a + t.seconds, 0))} total)</div>`
+                : small.length
+                ? `<div class="rv-more" onclick="rvToggleSmallTags()">▲ hide the small stuff</div>`
+                : ''
+        );
+    }
+
+    function renderRvTimeline() {
+        const el = document.getElementById('rvTimeline');
+        const lo = _rvData.day_min_minute, hi = _rvData.day_max_minute;
+        const span = Math.max(1, hi - lo);
+        const pos = (m) => ((m - lo) / span * 100);
+
+        // Hour ruler: every 2h if the window is wide, hourly if narrow.
+        const step = span > 10 * 60 ? 120 : 60;
+        let ruler = '';
+        let grid = '';
+        for (let m = Math.ceil(lo / step) * step; m <= hi; m += step) {
+            ruler += `<span style="left:${pos(m).toFixed(2)}%">${clockLabel(m)}</span>`;
+            grid += `<div class="gl" style="left:${pos(m).toFixed(2)}%"></div>`;
+        }
+
+        const rows = _rvData.days.map(d => {
+            const [y, mo, dd] = d.date.split('-').map(Number);
+            const wd = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][new Date(y, mo - 1, dd).getDay()];
+            const blocks = d.blocks.map(b => {
+                const left = pos(b.start_minute), width = Math.max(0.35, pos(b.end_minute) - left);
+                const dim = _rvOpenTags.size && !_rvOpenTags.has(b.tag_id) ? ' dim' : '';
+                const label = width > 4 ? esc(b.name) : '';
+                const t = b.start.slice(11, 16);
+                const end = b.start.slice(0, 11) + String(Math.floor(b.end_minute / 60)).padStart(2, '0')
+                            + ':' + String(b.end_minute % 60).padStart(2, '0');
+                return `<div class="rv-tl-block${dim}" style="left:${left.toFixed(2)}%;width:${width.toFixed(2)}%;background:${rvColor(b.tag_id)}"
+                     data-name="${esc(b.name)}" data-tag="${esc(b.tag)}"
+                     data-when="${t}–${end.slice(11)}" data-dur="${fmtH(b.minutes * 60)}">${label}</div>`;
+            }).join('');
+            const hrs = d.seconds > 0 ? fmtH(d.seconds) : '—';
+            return `<div class="rv-tl-day">
+                <div class="rv-tl-label"><b>${wd} ${dd}</b> · ${hrs}</div>
+                <div class="rv-tl-track">${grid}${blocks}</div>
+            </div>`;
+        }).join('');
+        el.innerHTML = `<div class="rv-tl-hours">${ruler}</div>${rows}`;
+    }
+
+    // Delegated hover — blocks can be 3px wide, so a real tooltip beats title=.
+    (function wireTimelineTooltip() {
+        const tip = document.getElementById('rvTooltip');
+        const host = document.getElementById('rvTimeline');
+        host.addEventListener('mouseover', (e) => {
+            const b = e.target.closest('.rv-tl-block');
+            if (!b) return;
+            tip.innerHTML = `<div class="t">${b.dataset.name || '(unnamed)'}</div>` +
+                `<div class="m">${b.dataset.tag}</div>` +
+                `<div class="m">${b.dataset.when} · ${b.dataset.dur}</div>`;
+            tip.style.display = 'block';
+        });
+        host.addEventListener('mousemove', (e) => {
+            if (tip.style.display !== 'block') return;
+            const w = tip.offsetWidth, h = tip.offsetHeight;
+            let x = e.clientX + 14, y = e.clientY + 16;
+            if (x + w > window.innerWidth - 8) x = e.clientX - w - 14;
+            if (y + h > window.innerHeight - 8) y = e.clientY - h - 12;
+            tip.style.left = x + 'px';
+            tip.style.top = y + 'px';
+        });
+        host.addEventListener('mouseout', (e) => {
+            if (e.target.closest('.rv-tl-block')) tip.style.display = 'none';
+        });
+    })();
+
+    function rvEstTable(rows, containerId, kind) {
+        const el = document.getElementById(containerId);
+        if (!rows.length) {
+            el.innerHTML = `<div class="empty-state" style="padding:28px">${kind === 'over' ? 'Nothing ran long' : 'Nothing came in under'}</div>`;
+            return;
+        }
+        const body = rows.map(r => `<tr>
+            <td>${esc(r.name)}</td>
+            <td class="${kind === 'over' ? 'overtime' : 'within-ambitious'}">${fmtH(r.elapsed_seconds)}</td>
+            <td style="color:var(--text-muted)">${fmtH(r.estimated_seconds)}</td>
+            <td class="${kind === 'over' ? 'overtime' : 'within-ambitious'}">${pct(r.accuracy)}</td>
+        </tr>`).join('');
+        el.innerHTML = `<table><thead><tr><th>Task</th><th>Actual</th><th>Est</th><th>Ratio</th></tr></thead><tbody>${body}</tbody></table>`;
+    }
+
+    function renderRvLoose() {
+        const el = document.getElementById('rvLoose');
+        const rows = _rvData.loose_threads;
+        if (!rows.length) { el.innerHTML = '<div class="empty-state" style="padding:28px">Nothing left open</div>'; return; }
+        el.innerHTML = `<table><thead><tr><th>Task</th><th>Tag</th><th>This period</th><th>Lifetime</th><th>State</th><th>Last touched</th></tr></thead><tbody>` +
+            rows.map(r => `<tr>
+                <td>${esc(r.name)}</td>
+                <td style="color:var(--text-muted)">${esc(r.tag)}</td>
+                <td>${fmtH(r.seconds)}</td>
+                <td style="color:var(--text-muted)">${fmtH(r.total_elapsed_seconds)}</td>
+                <td><span class="badge badge-gray">${esc(r.state)}</span></td>
+                <td style="color:var(--text-muted)">${esc(r.last_end.slice(5, 16).replace('T', ' '))}</td>
+            </tr>`).join('') + '</tbody></table>';
+    }
+
+    function renderRangeTimeStacked(review, period) {
+        const ctx = document.getElementById('rangeTimeChart').getContext('2d');
+        if (rangeCharts.time) rangeCharts.time.destroy();
+        const top = review.tags.slice(0, 8);
+        const topIds = new Set(top.map(t => t.id));
+        const datasets = top.map(t => ({
+            label: t.name.length > 28 ? t.name.slice(0, 27) + '…' : t.name,
+            data: review.days.map(d => +(((d.by_tag[t.id] || 0) / 3600).toFixed(2))),
+            backgroundColor: rvColor(t.id),
+            borderWidth: 0,
+        }));
+        const otherData = review.days.map(d => {
+            let s = 0;
+            for (const [k, v] of Object.entries(d.by_tag)) if (!topIds.has(k)) s += v;
+            return +((s / 3600).toFixed(2));
+        });
+        if (otherData.some(v => v > 0)) {
+            datasets.push({ label: 'Other', data: otherData, backgroundColor: '#C9CCD1', borderWidth: 0 });
+        }
+        rangeCharts.time = new Chart(ctx, {
+            type: 'bar',
+            data: { labels: review.days.map(d => dayLabel(d.date, period)), datasets },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: { display: true, position: 'bottom', labels: { boxWidth: 10, font: { size: 10 } } },
+                    tooltip: {
+                        callbacks: {
+                            label: (c) => c.parsed.y > 0 ? `${c.dataset.label}: ${c.parsed.y.toFixed(2)} h` : null,
+                        },
+                    },
+                },
+                scales: {
+                    x: { stacked: true, grid: { display: false } },
+                    y: { stacked: true, beginAtZero: true, title: { display: true, text: 'Hours' } },
+                },
+            },
+        });
+    }
+
+    // ---- my own weekly summary (persisted) ---- //
+    function rvSetSaveState(text, color) {
+        const el = document.getElementById('rvSaveState');
+        if (el) { el.textContent = text; el.style.color = color || 'var(--text-muted)'; }
+    }
+
+    function rvWordCount() {
+        const ta = document.getElementById('rvEditor');
+        const words = ta.value.trim() ? ta.value.trim().split(/\s+/).length : 0;
+        document.getElementById('rvWords').textContent = `${words} word${words === 1 ? '' : 's'}`;
+    }
+
+    async function rvSaveSummary() {
+        const ta = document.getElementById('rvEditor');
+        rvSetSaveState('saving…');
+        try {
+            const res = await fetch('/api/summary', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ key: _rvPeriodKey, text: ta.value }),
+            });
+            const d = await res.json();
+            rvSetSaveState(d.updated_at ? `saved ${d.updated_at.slice(11, 16)}` : 'saved', 'var(--green)');
+            const banner = document.getElementById('rvBanner');
+            if (banner && ta.value.trim()) banner.style.display = 'none';
+        } catch (e) {
+            rvSetSaveState('save failed — retry', 'var(--red)');
+        }
+    }
+
+    function rvEditorInput() {
+        rvWordCount();
+        rvSetSaveState('unsaved…');
+        clearTimeout(_rvSaveTimer);
+        _rvSaveTimer = setTimeout(rvSaveSummary, 1200);
+    }
+
+    function rvInsertDraft() {
+        const ta = document.getElementById('rvEditor');
+        const draft = _rvData.summary_text;
+        ta.value = ta.value.trim() ? ta.value.replace(/\s*$/, '\n\n') + draft : draft;
+        ta.focus();
+        rvEditorInput();
+    }
+
+    function renderRvMine(data) {
+        const mine = data.summary || { text: '', updated_at: '' };
+        const ta = document.getElementById('rvEditor');
+        // Don't clobber in-flight typing on the 60s auto-refresh.
+        if (document.activeElement !== ta) ta.value = mine.text || '';
+        rvWordCount();
+        rvSetSaveState(mine.updated_at ? `saved ${mine.updated_at.slice(0, 16).replace('T', ' ')}` : 'not written yet',
+                       mine.updated_at ? 'var(--text-muted)' : 'var(--accent)');
+        const banner = document.getElementById('rvBanner');
+        banner.style.display = (!(mine.text || '').trim() && data.period === 'week') ? '' : 'none';
+    }
+
+    function renderReview(data) {
+        _rvData = data.review;
+        _rvPeriodKey = `${data.period}-${data.start}`;
+        _rvColors = {};
+        _rvData.tags.forEach((t, i) => { _rvColors[t.id] = RV_PALETTE[i % RV_PALETTE.length]; });
+        for (const id of [..._rvOpenTags]) {
+            if (!_rvData.tags.some(t => t.id === id)) _rvOpenTags.delete(id);
+        }
+        renderRvBreakdown();
+        renderRvTimeline();
+        rvEstTable(_rvData.overruns, 'rvOverruns', 'over');
+        rvEstTable(_rvData.wins, 'rvWins', 'under');
+        renderRvLoose();
+        document.getElementById('rvSummary').textContent = _rvData.summary_text;
+        renderRvMine(data);
+        const foot = document.getElementById('rvNoIntervalNote');
+        if (_rvData.no_interval_tasks > 0) {
+            foot.style.display = '';
+            foot.textContent = `Heads up: ${_rvData.no_interval_tasks} task(s) completed in this range have no work-interval data (recorded before interval tracking existed) and are excluded from every number in this review.`;
+        } else {
+            foot.style.display = 'none';
+        }
+    }
+
+
+    // ---- estimation calibration: how tightly does actual track estimate? ---- //
+    function pearson(xs, ys) {
+        const n = xs.length;
+        if (n < 3) return null;
+        const mx = xs.reduce((a, b) => a + b, 0) / n, my = ys.reduce((a, b) => a + b, 0) / n;
+        let sxy = 0, sxx = 0, syy = 0;
+        for (let i = 0; i < n; i++) {
+            const dx = xs[i] - mx, dy = ys[i] - my;
+            sxy += dx * dy; sxx += dx * dx; syy += dy * dy;
+        }
+        if (sxx === 0 || syy === 0) return null;
+        return { r: sxy / Math.sqrt(sxx * syy), slope: sxy / sxx, intercept: my - (sxy / sxx) * mx, n };
+    }
+
+    // Average ranks so ties don't skew Spearman.
+    function ranks(vals) {
+        const idx = vals.map((v, i) => [v, i]).sort((a, b) => a[0] - b[0]);
+        const out = new Array(vals.length);
+        let i = 0;
+        while (i < idx.length) {
+            let j = i;
+            while (j + 1 < idx.length && idx[j + 1][0] === idx[i][0]) j++;
+            const avg = (i + j) / 2 + 1;
+            for (let k = i; k <= j; k++) out[idx[k][1]] = avg;
+            i = j + 1;
+        }
+        return out;
+    }
+
+    function median(vals) {
+        if (!vals.length) return 0;
+        const v = [...vals].sort((a, b) => a - b), m = v.length >> 1;
+        return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2;
+    }
+
+    function renderCalibStats(calibration) {
+        const el = document.getElementById('rvCalibStats');
+        const pts = (calibration || []).filter(c => c.estimated_seconds > 0 && c.elapsed_seconds > 0);
+        if (pts.length < 3) {
+            el.innerHTML = `<span style="opacity:.8">Need at least 3 estimated tasks to correlate (have ${pts.length}).</span>`;
+            return;
+        }
+        const est = pts.map(c => c.estimated_seconds / 60);
+        const act = pts.map(c => c.elapsed_seconds / 60);
+        const lin = pearson(est, act);
+        const log = pearson(est.map(Math.log), act.map(Math.log));
+        const rk = pearson(ranks(est), ranks(act));
+        const ratios = pts.map(c => c.elapsed_seconds / c.estimated_seconds);
+        const medRatio = median(ratios);
+        const within25 = ratios.filter(r => r >= 0.75 && r <= 1.25).length;
+
+        const sign = lin.intercept >= 0 ? '+' : '−';
+        el.innerHTML =
+            `<b>n = ${pts.length}</b> · Pearson <b>r = ${lin.r.toFixed(2)}</b> (r² = ${(lin.r * lin.r).toFixed(2)})` +
+            (log ? ` · log–log r = <b>${log.r.toFixed(2)}</b>` : '') +
+            (rk ? ` · Spearman ρ = <b>${rk.r.toFixed(2)}</b>` : '') +
+            `<br>Fit: actual ≈ <b>${lin.slope.toFixed(2)}×</b> estimate ${sign} ${Math.abs(lin.intercept).toFixed(0)} min` +
+            ` · median actual/est = <b>${medRatio.toFixed(2)}×</b>` +
+            ` · <b>${within25}/${pts.length}</b> (${(within25 / pts.length * 100).toFixed(0)}%) landed within ±25%.`;
+    }
+
+    document.getElementById('rvCopyBtn').addEventListener('click', async (e) => {
+        const btn = e.currentTarget;
+        try {
+            await navigator.clipboard.writeText(_rvData.summary_text);
+            btn.textContent = 'Copied ✓';
+        } catch (err) {
+            // Clipboard API needs a secure context; select the text so ⌘C works.
+            const pre = document.getElementById('rvSummary');
+            const range = document.createRange();
+            range.selectNodeContents(pre);
+            const sel = window.getSelection();
+            sel.removeAllRanges(); sel.addRange(range);
+            btn.textContent = 'Selected — ⌘C';
+        }
+        setTimeout(() => { btn.textContent = 'Copy'; }, 1800);
+    });
+
+    function rvFocusEditor() {
+        const ta = document.getElementById('rvEditor');
+        document.getElementById('rvWriteSection').scrollIntoView({ behavior: 'smooth', block: 'center' });
+        setTimeout(() => ta.focus(), 350);
+    }
+
+    // ⌘S / Ctrl+S saves the summary immediately instead of the browser's save dialog.
+    document.addEventListener('keydown', (e) => {
+        if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+            const ta = document.getElementById('rvEditor');
+            if (ta && document.getElementById('rangeView').style.display !== 'none') {
+                e.preventDefault();
+                clearTimeout(_rvSaveTimer);
+                rvSaveSummary();
+            }
+        }
+    });
+
+
+    // Sidebar: built from whichever view is visible, with scroll-spy.
+    let _rvNavSpy = null;
+    function buildNav() {
+        const nav = document.getElementById('rvNav');
+        const root = currentPeriod === 'day'
+            ? document.getElementById('dayView') : document.getElementById('rangeView');
+        const sections = [...root.querySelectorAll('.section')].filter(sec => {
+            const h = sec.querySelector('h2');
+            return h && sec.offsetParent !== null;
+        });
+        sections.forEach((sec, i) => { if (!sec.id) sec.id = `sec-auto-${i}`; });
+        // A side-by-side section (Ran long | Came in under) has two headings —
+        // name it after both rather than silently dropping one.
+        nav.innerHTML = sections.map(sec => {
+            const label = [...sec.querySelectorAll('h2')].map(h => h.textContent).join(' / ');
+            return `<a href="#${sec.id}" onclick="event.preventDefault();document.getElementById('${sec.id}').scrollIntoView({behavior:'smooth',block:'start'})">${esc(label)}</a>`;
+        }).join('');
+        nav.classList.toggle('ready', sections.length > 1);
+
+        if (_rvNavSpy) _rvNavSpy.disconnect();
+        const links = new Map(sections.map(sec => [sec.id, nav.querySelector(`a[href="#${sec.id}"]`)]));
+        const seen = new Set();
+        _rvNavSpy = new IntersectionObserver((entries) => {
+            for (const e of entries) {
+                if (e.isIntersecting) seen.add(e.target.id); else seen.delete(e.target.id);
+            }
+            // Highlight the topmost section currently on screen.
+            const active = sections.find(sec => seen.has(sec.id));
+            links.forEach((a, id) => a.classList.toggle('on', !!active && id === active.id));
+        }, { rootMargin: '-70px 0px -55% 0px' });
+        sections.forEach(sec => _rvNavSpy.observe(sec));
+    }
+
     function renderRange(data) {
         document.title = `etime — ${data.period} · ${data.start} → ${data.end}`;
         const periodLabel = data.period === 'month' ? 'This month' : 'This week';
         document.getElementById('rangeSummary').innerHTML =
             `<b>${periodLabel}</b> · ${data.start} → ${data.end}`;
-        renderRangeStats(data.stats);
-        renderRangeBar('rangeTimeChart', 'time', data.daily, data.period, 'hours', 'Hours', '#90CAF9', 'Hours');
+        renderReview(data);
+        renderRangeStats(data.stats, data.review);
+        renderRangeTimeStacked(data.review, data.period);
         renderRangeSwitches(data.daily, data.period);
         renderRangeCalibration(data.calibration);
+        renderCalibStats(data.calibration);
+        buildNav();
     }
 
     async function fetchAndRenderDay(selectedDate) {
@@ -1079,6 +1759,7 @@
 
         window._deterredData = data.deterred;
         renderInsights(data.stats, data.tasks, data.distractions);
+        buildNav();
     }
 
     async function fetchAndRender(selectedDate = null) {
@@ -1107,8 +1788,17 @@
         fetchAndRender(datePicker.value);
     });
 
-    // Initial load
-    fetchAndRender(datePicker.value);
+    // Initial load — ?period=week and #summary let the Sunday reminder deep-link here.
+    const _params = new URLSearchParams(location.search);
+    const _wantPeriod = _params.get('period');
+    if (_wantPeriod === 'week' || _wantPeriod === 'month') {
+        currentPeriod = _wantPeriod;
+        document.querySelectorAll('#periodToggle button').forEach(
+            b => b.classList.toggle('active', b.dataset.period === _wantPeriod));
+    }
+    fetchAndRender(datePicker.value).then(() => {
+        if (location.hash === '#summary') rvFocusEditor();
+    });
 
     // Auto-refresh every 60s (use current picker value)
     setInterval(() => fetchAndRender(datePicker.value), 60000);
