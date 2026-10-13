@@ -34,6 +34,12 @@ class Task:
     parent_task_id: Optional[str] = None  # ID of parent task (for subtasks)
     is_stashed: bool = False  # Hidden from default view but not completed
     is_collapsed: bool = False  # When True, this task's subtree is folded (hidden) in the overlay
+    # ISO timestamp of when this task started waiting on something external (a
+    # reply, a sweep, a build). Deliberately a field on a paused task rather than
+    # a new TaskState: waiting is about *why* it's parked, and everything that
+    # reasons about state — the dashboard, the review, the alarms — should go on
+    # treating it as plain paused.
+    waiting_since: Optional[str] = None
 
     def __post_init__(self):
         """Auto-generate ID and timestamp if not provided."""
@@ -186,4 +192,6 @@ class Task:
             d['is_stashed'] = False
         if 'is_collapsed' not in d:
             d['is_collapsed'] = False
+        if 'waiting_since' not in d:
+            d['waiting_since'] = None
         return cls(**d)

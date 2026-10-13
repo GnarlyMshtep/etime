@@ -8,7 +8,7 @@ from datetime import datetime
 from PyQt6.QtWidgets import QApplication, QMessageBox, QDialog, QVBoxLayout, QLabel
 from PyQt6.QtCore import QObject, QTimer, Qt
 from PyQt6.QtGui import QFont
-from AppKit import NSWorkspace
+from AppKit import NSWorkspace, NSApplication
 from Foundation import NSObject
 import objc
 
@@ -72,7 +72,7 @@ from search_dialog import SearchDialog
 from rename_dialog import RenameDialog
 from time_adjust_dialog import TimeAdjustDialog
 from hotkeys import HotkeyManager
-from config import KEY_N, KEY_P, KEY_C, KEY_Q, KEY_S, KEY_U, KEY_H, KEY_T, KEY_F, KEY_UP, KEY_DOWN, KEY_A, KEY_LEFT, KEY_RIGHT, KEY_G, KEY_SLASH, KEY_E, KEY_EQUAL, KEY_MINUS, DEFAULT_TASK_MINUTES, DETERRED_FILE
+from config import KEY_N, KEY_P, KEY_C, KEY_Q, KEY_S, KEY_U, KEY_H, KEY_T, KEY_F, KEY_UP, KEY_DOWN, KEY_A, KEY_LEFT, KEY_RIGHT, KEY_G, KEY_SLASH, KEY_E, KEY_W, KEY_EQUAL, KEY_MINUS, DEFAULT_TASK_MINUTES, DETERRED_FILE, CATEGORY_ESTIMATE_SECONDS
 from sounds import play_alarm_loop, stop_alarm, play_success_sound, play_ambitious_success_sound
 import dashboard
 
@@ -115,6 +115,7 @@ class HelpDialog(QDialog):
         hotkeys = [
             ("⌃⌥⌘N", "New task"),
             ("⌃⌥⌘P", "Toggle start / pause"),
+            ("⌃⌥⌘W", "Waiting on something external (pauses + starts a wait clock)"),
             ("⌃⌥⌘C", "Complete focused task"),
             ("⌃⌥⌘E", "Rename focused task"),
             ("⌃⌥⌘+", "Add time to focused task"),
@@ -210,6 +211,7 @@ class AppController(QObject):
         self.hotkey_manager.register(KEY_G, self.log_deterred)
         self.hotkey_manager.register(KEY_SLASH, self.open_search)
         self.hotkey_manager.register(KEY_E, self.edit_task_name)
+        self.hotkey_manager.register(KEY_W, self.toggle_waiting)
         # ⌃⌥⌘+ adds time, ⌃⌥⌘− removes it; register both the shifted and bare
         # variants of each key so a fumbled Shift still works.
         self.hotkey_manager.register(KEY_EQUAL, self.add_time)
@@ -298,6 +300,33 @@ class AppController(QObject):
         # Save state (alarm level was updated in timer engine)
         save_active_tasks(self.tasks)
 
+    def _category_insert_index(self, task: Task) -> Optional[int]:
+        """Where a new category tag belongs: just past the last existing one.
+
+        Returns None when ``task`` isn't a category tag, or when there is no
+        existing one to anchor to — in both cases the caller appends as before.
+
+        Relies on the invariant the rest of this file maintains: a subtree is a
+        contiguous run headed by its root, so everything after the anchor root
+        that still has a parent belongs to the anchor's subtree.
+        """
+        if task.parent_task_id is not None:
+            return None
+        if task.estimated_seconds != CATEGORY_ESTIMATE_SECONDS:
+            return None
+
+        last_category = None
+        for i, t in enumerate(self.tasks):
+            if t.parent_task_id is None and t.estimated_seconds == CATEGORY_ESTIMATE_SECONDS:
+                last_category = i
+        if last_category is None:
+            return None
+
+        idx = last_category + 1
+        while idx < len(self.tasks) and self.tasks[idx].parent_task_id is not None:
+            idx += 1
+        return idx
+
     def new_task(self, suppress_parent: bool = False):
         """Handle new task hotkey.
 
@@ -347,11 +376,20 @@ class AppController(QObject):
             parent.is_collapsed = False
             cur = parent
 
-    def _on_task_submitted(self, name: str, minutes: int, ambitious_minutes: int, parent_task_id: str):
-        """Handle task submission from dialog."""
+    def _on_task_submitted(self, name: str, minutes: int, ambitious_minutes: int,
+                           parent_task_id: str, start_iso: str = "", end_iso: str = ""):
+        """Handle task submission from dialog.
+
+        With a start/end the task is backdated: the work already happened, so it
+        arrives paused with that stretch on the clock rather than starting a
+        timer. It's deliberately *not* completed — filing it is a separate
+        decision from finishing it, and plenty of backdated work is still open.
+        """
         ambitious_str = f", ambitious={ambitious_minutes}" if ambitious_minutes > 0 else ""
         parent_str = f", subtask of {parent_task_id[:8]}" if parent_task_id else ""
-        print(f"Creating new task: {name}, {minutes} min{ambitious_str}{parent_str}")
+        backdated = bool(start_iso and end_iso)
+        when_str = f", backdated {start_iso[11:16]}-{end_iso[11:16]}" if backdated else ""
+        print(f"Creating new task: {name}, {minutes} min{ambitious_str}{parent_str}{when_str}")
         print(f"Before task creation: {len(self.tasks)} tasks")
 
         # Create task
@@ -360,11 +398,20 @@ class AppController(QObject):
             name=name,
             estimated_seconds=minutes * 60,
             ambitious_seconds=ambitious_minutes * 60 if ambitious_minutes > 0 else None,
-            state=TaskState.ONGOING,  # Auto-start
-            started_at=datetime.now().isoformat(),
+            state=TaskState.PAUSED if backdated else TaskState.ONGOING,  # else auto-start
+            started_at=start_iso if backdated else datetime.now().isoformat(),
             parent_task_id=parent_task_id or None,
         )
-        task.start_interval()
+        if backdated:
+            elapsed = (datetime.fromisoformat(end_iso)
+                       - datetime.fromisoformat(start_iso)).total_seconds()
+            task.elapsed_seconds = elapsed
+            task.work_intervals = [{"start": start_iso, "end": end_iso}]
+            # An already-overrun backdated task would otherwise fire its alarm the
+            # moment you resume it, for time you spent before it existed.
+            task.last_alarm_level = 1 if elapsed >= task.estimated_seconds else 0
+        else:
+            task.start_interval()
 
         # Determine insertion position: right after parent if subtask, else end
         if parent_task_id:
@@ -390,9 +437,15 @@ class AppController(QObject):
                 self.overlay.add_task(task)
                 new_index = len(self.tasks) - 1
         else:
-            self.tasks.append(task)
-            self.overlay.add_task(task)
-            new_index = len(self.tasks) - 1
+            insert_idx = self._category_insert_index(task)
+            if insert_idx is None:
+                self.tasks.append(task)
+                self.overlay.add_task(task)
+                new_index = len(self.tasks) - 1
+            else:
+                self.tasks.insert(insert_idx, task)
+                self.overlay.sync_visible_widgets()
+                new_index = insert_idx
 
         print(f"After task creation: {len(self.tasks)} tasks (inserted at {new_index})")
 
@@ -449,6 +502,10 @@ class AppController(QObject):
 
         print(f"Starting task: {task.name}")
 
+        # Picking it back up answers whatever it was waiting on.
+        if task.waiting_since:
+            task.waiting_since = None
+
         # Set state to ONGOING
         task.state = TaskState.ONGOING
 
@@ -493,11 +550,81 @@ class AppController(QObject):
         # Save
         save_active_tasks(self.tasks)
 
+    def toggle_waiting(self):
+        """Mark the focused task as blocked on something external, or clear it.
+
+        A paused task tells you nothing about *why* it's parked. This separates
+        "I stopped working on it" from "it can't move until someone else does",
+        and starts a clock so a week-old wait is visible as one.
+        """
+        task = self.overlay.get_focused_task()
+        if not task:
+            print("No task focused")
+            return
+
+        if task.waiting_since:
+            task.waiting_since = None
+            print(f"No longer waiting: {task.name}")
+        else:
+            # Waiting implies parked — a task can't be running and blocked.
+            if task.state == TaskState.ONGOING:
+                self.pause_task()
+            task.waiting_since = datetime.now().isoformat()
+            print(f"Waiting on something external: {task.name}")
+
+        self.overlay.update_display()
+        save_active_tasks(self.tasks)
+
+    def _confirm_completing_category(self, task: Task) -> bool:
+        """Ask before filing away a category tag that still has work under it.
+
+        Completing a task promotes its children up one level, which is right for
+        a real task and destructive for a category root: the whole group lands at
+        top level and the header disappears. It's also silent, and easy to do by
+        accident on a folded header, where the row you can see *is* the category.
+        """
+        if task.parent_task_id is not None or task.estimated_seconds != CATEGORY_ESTIMATE_SECONDS:
+            return True
+        children = [t for t in self.tasks if t.parent_task_id == task.id]
+        if not children:
+            return True
+
+        # A message box on a background app opens without keyboard focus on
+        # macOS, so a confirmation nobody can answer is worse than none at all.
+        previous_app = NSWorkspace.sharedWorkspace().frontmostApplication()
+        NSApplication.sharedApplication().activateIgnoringOtherApps_(True)
+
+        box = QMessageBox()
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Complete a category?")
+        box.setText(f"'{task.name}' is a category with "
+                    f"{len(children)} task{'s' if len(children) != 1 else ''} under it.")
+        box.setInformativeText(
+            f"Completing it files the header away and moves {'them' if len(children) != 1 else 'it'} "
+            f"up to the top level.\n\nTo put the category aside without breaking it up, "
+            f"stash it instead (⌃⌥⌘⇧→)."
+        )
+        complete_button = box.addButton("Complete it", QMessageBox.ButtonRole.DestructiveRole)
+        cancel_button = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(cancel_button)
+        box.exec()
+
+        if previous_app:
+            previous_app.activateWithOptions_(1)  # NSApplicationActivateIgnoringOtherApps
+
+        confirmed = box.clickedButton() is complete_button
+        if not confirmed:
+            print(f"Cancelled completing category '{task.name}'")
+        return confirmed
+
     def complete_task(self):
         """Handle complete task hotkey."""
         task = self.overlay.get_focused_task()
         if not task:
             print("No task focused")
+            return
+
+        if not self._confirm_completing_category(task):
             return
 
         print(f"Completing task: {task.name}")
@@ -545,6 +672,8 @@ class AppController(QObject):
         # Set state to COMPLETED
         task.state = TaskState.COMPLETED
         task.completed_at = datetime.now().isoformat()
+        # Nothing is waiting on a finished task — don't carry the marker into history.
+        task.waiting_since = None
 
         # Append to history
         append_to_history(task)

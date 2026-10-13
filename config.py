@@ -34,11 +34,18 @@ COLOR_CARD_BG = "#FCFAF5"        # Off-white card
 COLOR_CARD_BORDER = "#E4DBCA"    # Faint sand card border
 COLOR_FOCUSED_BORDER = "#B89B72" # Brown border for the focused card
 COLOR_RECENT = "#D9A441"         # Warm gold accent for recently-active tasks
-COLOR_LAST_RUN_BG = "#CFE1F2"    # Light blue fill for the last-run "return here" task
+COLOR_LAST_RUN_BG = "#D6D2CA"    # Warm grey fill for the last-run "return here" task
+COLOR_WAITING = "#3F6493"        # Slate blue text for tasks blocked on something external
+COLOR_WAITING_BG = "#DCE6F2"     # Pale blue fill behind a waiting task
 
 # The last-run task must have run at least this long to be highlighted (a shorter
 # run usually means you started it and immediately paused).
 LAST_RUN_MIN_SECONDS = 3.0
+
+# Roots estimated at exactly a minute are category tags, not real work: they hold
+# no time of their own and act as the tag the dashboard totals under. Kept here
+# rather than in main.py so scripts can share it without importing PyQt6.
+CATEGORY_ESTIMATE_SECONDS = 60
 
 # Sounds
 AMBITIOUS_SOUND_FILE = ETIME_DIR / "ambitious.aiff"
@@ -85,5 +92,6 @@ KEY_RIGHT = 124 # Right arrow - Stash (with Shift)
 KEY_G = 5       # G key - Log deterred distraction
 KEY_SLASH = 44  # / key - Search tasks
 KEY_E = 14      # E key - Edit focused task's name
+KEY_W = 13      # W key - Mark/unmark the focused task as waiting on something external
 KEY_EQUAL = 24  # = / + key - Add elapsed minutes to focused task
 KEY_MINUS = 27  # - / _ key - Remove elapsed minutes from focused task

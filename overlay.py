@@ -15,6 +15,7 @@ from config import (
     COLOR_FOCUSED, COLOR_OVERTIME, COLOR_PAUSED, COLOR_NORMAL, COLOR_UNFOCUSED, COLOR_AMBITIOUS,
     COLOR_WINDOW_BG, COLOR_WINDOW_BORDER, COLOR_CARD_BG, COLOR_CARD_BORDER,
     COLOR_FOCUSED_BORDER, COLOR_RECENT, COLOR_LAST_RUN_BG, LAST_RUN_MIN_SECONDS,
+    COLOR_WAITING, COLOR_WAITING_BG,
     FONT_FAMILY_MONO, FONT_FAMILY_SERIF, FONT_SIZE,
     FOCUS_INDICATOR, NO_FOCUS_INDICATOR,
     FADE_IN_DURATION_MS, FADE_OUT_DURATION_MS
@@ -61,6 +62,16 @@ class TaskWidget(QWidget):
         self.name_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         layout.addWidget(self.name_label, stretch=1)
 
+        # How long this task has been blocked on something external. Hidden
+        # unless it is — a wait only means something once you can see its age.
+        self.wait_label = QLabel()
+        wait_font = QFont(FONT_FAMILY_MONO, FONT_SIZE - 1)
+        wait_font.setStyleHint(QFont.StyleHint.Monospace)
+        self.wait_label.setFont(wait_font)
+        self.wait_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.wait_label.hide()
+        layout.addWidget(self.wait_label)
+
         # Time display (monospace font)
         self.time_label = QLabel()
         time_font = QFont(FONT_FAMILY_MONO, FONT_SIZE)
@@ -91,6 +102,13 @@ class TaskWidget(QWidget):
         # Always show 3-value display: actual / ambitious / estimated
         self.time_label.setText(f"{elapsed_str} / {ambitious_str} / {estimated_str}")
 
+        waiting_for = self._waiting_seconds()
+        if waiting_for is None:
+            self.wait_label.hide()
+        else:
+            self.wait_label.setText(f"⏳ {self._format_wait(waiting_for)}")
+            self.wait_label.show()
+
         # Check if task is in ambitious state (ongoing, has ambitious target, within it)
         in_ambitious = (
             self.task.state == TaskState.ONGOING
@@ -99,7 +117,10 @@ class TaskWidget(QWidget):
         )
 
         # Determine text color
-        if self.task.state == TaskState.PAUSED:
+        if waiting_for is not None:
+            # Blocked on someone else — distinct from "I put this down".
+            color = COLOR_WAITING
+        elif self.task.state == TaskState.PAUSED:
             color = COLOR_PAUSED
         elif self.task.elapsed_seconds >= self.task.estimated_seconds:
             # Overtime tasks are always red (focused or not)
@@ -142,6 +163,11 @@ class TaskWidget(QWidget):
         if (self.is_last_run and not self.is_stashed
                 and not (self.is_collapsed and self.has_active_hidden)):
             bg_color = COLOR_LAST_RUN_BG
+
+        # Waiting outranks the return-here cue: if the last thing you touched is
+        # now blocked, that's the more useful thing to know about it.
+        if waiting_for is not None and not self.is_stashed:
+            bg_color = COLOR_WAITING_BG
 
         # Recently-active tasks (or the visible section header of a folded-away
         # active task) get a gold border so you can spot where work is happening.
@@ -251,6 +277,32 @@ class TaskWidget(QWidget):
         if self.is_last_run != is_last_run:
             self.is_last_run = is_last_run
             self.update_display()
+
+    def _waiting_seconds(self) -> Optional[float]:
+        """Seconds this task has been waiting, or None if it isn't.
+
+        A completed or running task is never waiting, whatever the field says —
+        that guards against a marker that outlived whatever set it.
+        """
+        stamp = getattr(self.task, "waiting_since", None)
+        if not stamp or self.task.state in (TaskState.ONGOING, TaskState.COMPLETED):
+            return None
+        try:
+            return max(0.0, (datetime.now() - datetime.fromisoformat(stamp)).total_seconds())
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _format_wait(seconds: float) -> str:
+        """Coarse duration for a wait: minutes, then hours, then days."""
+        minutes = int(seconds // 60)
+        if minutes < 60:
+            return f"{minutes}m"
+        hours, minutes = divmod(minutes, 60)
+        if hours < 24:
+            return f"{hours}h {minutes:02d}m"
+        days, hours = divmod(hours, 24)
+        return f"{days}d {hours}h"
 
     @staticmethod
     def _format_time(seconds: float) -> str:
