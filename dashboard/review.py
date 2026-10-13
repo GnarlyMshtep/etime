@@ -65,7 +65,14 @@ class TaskRow:
 
 @dataclass
 class Block:
-    """A drawable chunk of work on one calendar day."""
+    """A drawable chunk of work on one calendar day.
+
+    A block is *derived*: intervals are clipped to the range, merged, then split
+    at midnight, so it does not always correspond to one stored interval. The
+    provenance fields say whether this one does — that is the only case the
+    dashboard is allowed to drag or stretch, because it is the only case where
+    the edit maps back to a single record without guessing.
+    """
     task_id: str
     name: str
     tag: str
@@ -74,6 +81,16 @@ class Block:
     end_minute: int
     minutes: float
     start: str
+    end: str = ""
+    # Every stored interval this block was drawn from, earliest first. A block is
+    # a contiguous *run* of work, so dragging it moves the whole run.
+    interval_indices: list[int] = field(default_factory=list)
+    interval_starts: list[str] = field(default_factory=list)
+    interval_ends: list[str] = field(default_factory=list)
+    resize_start_max: str = ""   # left edge can't be dragged past this
+    resize_end_min: str = ""     # right edge can't be dragged before this
+    editable: bool = False
+    lock_reason: str = ""        # shown to the user when not editable
 
 
 @dataclass
@@ -169,6 +186,45 @@ def _minute(dt: datetime) -> int:
     return dt.hour * 60 + dt.minute
 
 
+def _closed_intervals(task: dict) -> list[tuple[int, datetime, datetime]]:
+    """The task's stored intervals as (index, start, end), skipping open ones."""
+    out: list[tuple[int, datetime, datetime]] = []
+    for i, iv in enumerate(task.get("work_intervals") or []):
+        if not isinstance(iv, dict) or not iv.get("end"):
+            continue
+        try:
+            start = datetime.fromisoformat(iv["start"])
+            end = datetime.fromisoformat(iv["end"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if end > start:
+            out.append((i, start, end))
+    return out
+
+
+def _block_provenance(
+    task: dict, start: datetime, end: datetime, task_is_closed: bool
+) -> tuple[list[tuple[int, datetime, datetime]], str]:
+    """The stored intervals a drawn piece was built from, or why it's off limits.
+
+    Merging is fine — a run of intervals moves as the unit the user sees. What
+    can't be edited is a piece whose ends don't line up with the intervals behind
+    it, because then the range or a midnight cut them and there's no honest way to
+    map the drag back.
+    """
+    if not task_is_closed:
+        return [], "still open in etime — finish it there first"
+
+    parts = [(i, s, e) for i, s, e in _closed_intervals(task) if s < end and e > start]
+    if not parts:
+        return [], "no recorded interval behind this block"
+    if min(s for _, s, _ in parts) != start or max(e for _, _, e in parts) != end:
+        return [], "clipped to this day"
+
+    parts.sort(key=lambda p: p[1])
+    return parts, ""
+
+
 # --------------------------------------------------------------------------- #
 # Tag (root-of-tree) resolution
 # --------------------------------------------------------------------------- #
@@ -214,6 +270,9 @@ def build_review(
     hi = datetime.combine(dates[-1] + timedelta(days=1), time.min)
 
     all_tasks = list(history) + list(active)
+    # Only completed tasks are editable from the dashboard: etime rewrites
+    # active.json from memory, so a write to a live task would be clobbered.
+    open_ids = {t["id"] for t in active if t.get("id")}
     by_id = {t["id"]: t for t in all_tasks if t.get("id")}
     has_children: set[str] = {
         t["parent_task_id"] for t in all_tasks
@@ -338,6 +397,14 @@ def build_review(
                 day_ivs.append((start, end))
                 by_tag[tid] = by_tag.get(tid, 0.0) + dur
                 if dur >= MIN_BLOCK_SECONDS:
+                    parts, lock = _block_provenance(
+                        task=t, start=start, end=end,
+                        task_is_closed=t["id"] not in open_ids,
+                    )
+                    # The edges belong to specific intervals: dragging the left
+                    # one can't cross the end of the interval that owns it.
+                    left = min(parts, key=lambda p: p[1]) if parts else None
+                    right = max(parts, key=lambda p: p[2]) if parts else None
                     blocks.append(Block(
                         task_id=t["id"],
                         name=t.get("name", ""),
@@ -347,6 +414,14 @@ def build_review(
                         end_minute=max(_minute(start) + 1, _minute(end) or 24 * 60),
                         minutes=round(dur / 60, 1),
                         start=start.isoformat(),
+                        end=end.isoformat(),
+                        interval_indices=[i for i, _, _ in parts],
+                        interval_starts=[s.isoformat() for _, s, _ in parts],
+                        interval_ends=[e.isoformat() for _, _, e in parts],
+                        resize_start_max=left[2].isoformat() if left else "",
+                        resize_end_min=right[1].isoformat() if right else "",
+                        editable=bool(parts),
+                        lock_reason=lock,
                     ))
         blocks.sort(key=lambda b: b.start_minute)
         for b in blocks:

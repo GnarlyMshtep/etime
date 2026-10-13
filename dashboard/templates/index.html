@@ -67,13 +67,56 @@
         .stat-card.orange .value { color: var(--accent); }
 
         .section { margin-bottom: 32px; }
-        .section h2 {
+        .section > h2 {
             font-size: 18px;
             font-weight: 600;
             margin-bottom: 12px;
             padding-bottom: 8px;
             border-bottom: 2px solid var(--orange-light);
+            cursor: pointer;
+            user-select: none;
+            display: flex;
+            align-items: baseline;
+            gap: 8px;
         }
+        .section > h2::before {
+            content: '▾';
+            font-size: 11px;
+            color: var(--text-muted);
+            width: 10px;
+            transition: transform .12s;
+        }
+        .section.collapsed > h2::before { transform: rotate(-90deg); }
+        .section.collapsed > h2 { margin-bottom: 0; opacity: .72; }
+        .section.collapsed > *:not(h2) { display: none !important; }
+        .section > h2::after {
+            content: 'click to fold';
+            font-size: 11px; font-weight: 400; color: var(--text-muted);
+            opacity: 0; transition: opacity .12s;
+        }
+        .section > h2:hover::after { opacity: 1; }
+        .section.collapsed > h2::after { content: 'click to unfold'; }
+        .section h3 {
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 10px;
+            color: var(--text);
+        }
+
+        /* Weekly summaries, month view */
+        .rv-week { border: 1px solid var(--border); border-radius: 10px; background: var(--card-bg);
+                   padding: 12px 14px; margin-bottom: 10px; }
+        .rv-week-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; }
+        .rv-week-head b { font-size: 14px; }
+        .rv-week-head .when { font-size: 11px; color: var(--text-muted); }
+        .rv-week-head .grow { flex: 1; }
+        .rv-week-head button { font-size: 11px; padding: 3px 9px; border-radius: 6px;
+                               border: 1px solid var(--border); background: transparent;
+                               color: var(--text-muted); cursor: pointer; }
+        .rv-week-head button:hover { color: var(--text); border-color: var(--text-muted); }
+        .rv-week p { white-space: pre-wrap; font-size: 13px; line-height: 1.55; margin: 0; }
+        .rv-week.empty { border-style: dashed; }
+        .rv-week.empty p { color: var(--text-muted); font-style: italic; }
 
         .chart-container {
             background: var(--card-bg);
@@ -220,7 +263,7 @@
 
         /* ---- Weekly review ---- */
         .rv-bars { background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px; padding: 14px 18px; }
-        .rv-bar-row { display: grid; grid-template-columns: 14px 200px 1fr 150px; gap: 12px; align-items: center; padding: 5px 0; cursor: pointer; border-radius: 6px; }
+        .rv-bar-row { display: grid; grid-template-columns: 14px 200px 1fr 280px; gap: 12px; align-items: center; padding: 5px 0; cursor: pointer; border-radius: 6px; }
         .rv-bar-row:hover { background: #fafafa; }
         .rv-bar-row.dim { opacity: 0.35; }
         .rv-bar-row .nm { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -228,6 +271,7 @@
         .rv-bar-fill { height: 100%; border-radius: 4px; }
         .rv-bar-row .val { font-size: 12px; color: var(--text-muted); text-align: right; white-space: nowrap; }
         .rv-bar-row .val b { color: var(--text); font-size: 13px; }
+        .rv-bar-row .val .share { color: var(--text); }
 
         .rv-timeline { background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px; padding: 14px 18px; }
         .rv-tl-hours { display: flex; margin-left: 108px; height: 14px; position: relative; }
@@ -240,11 +284,29 @@
         .rv-tl-block { position: absolute; top: 3px; bottom: 3px; border-radius: 3px; overflow: hidden; font-size: 10px;
                        color: #fff; line-height: 20px; padding: 0 3px; white-space: nowrap; cursor: default; }
         .rv-tl-block.dim { opacity: 0.18; }
+        /* Only blocks that map back to a single stored interval can be edited.
+           The rest get a hatch so it's obvious before you try to grab one. */
+        .rv-tl-block.editable { cursor: grab; }
+        .rv-tl-block.editable::before, .rv-tl-block.editable::after {
+            content: ''; position: absolute; top: 0; bottom: 0; width: 5px;
+            background: rgba(255,255,255,.9); opacity: 0; transition: opacity .08s;
+        }
+        .rv-tl-block.editable::before { left: 0; }
+        .rv-tl-block.editable::after { right: 0; }
+        .rv-tl-block.editable:hover::before, .rv-tl-block.editable:hover::after { opacity: .85; }
+        .rv-tl-block.on-edge { cursor: ew-resize; }
+        .rv-tl-block.locked {
+            background-image: repeating-linear-gradient(45deg,
+                rgba(255,255,255,.30) 0 3px, rgba(255,255,255,0) 3px 7px);
+        }
+        .rv-tl-block.dragging { z-index: 5; filter: brightness(1.12);
+                                box-shadow: 0 0 0 2px rgba(0,0,0,.5); }
+        .rv-tl-track.drop-target { background: #eef2f7; }
         .rv-tl-tick { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--red); opacity: .55; }
 
         .rv-two { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
         @media (max-width: 860px) { .rv-two { grid-template-columns: 1fr; }
-                                    .rv-bar-row { grid-template-columns: 14px 130px 1fr 110px; } }
+                                    .rv-bar-row { grid-template-columns: 14px 130px 1fr 240px; } }
         .rv-tagchip { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 11px; color: #fff; max-width: 160px;
                       overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
         .rv-more { font-size: 13px; color: var(--accent); cursor: pointer; margin-top: 8px; display: inline-block; }
@@ -263,6 +325,12 @@
             box-shadow: 0 4px 14px rgba(0,0,0,.22);
         }
         #rvTooltip .t { font-weight: 600; margin-bottom: 3px; }
+        #rvEditToast { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%);
+                       z-index: 60; background: rgba(32,32,32,.94); color: #fff; padding: 8px 14px;
+                       border-radius: 8px; font-size: 12px; display: none; white-space: nowrap;
+                       box-shadow: 0 4px 16px rgba(0,0,0,.25); pointer-events: none; }
+        #rvEditToast.err { background: #B23A2E; }
+        #rvEditToast b { font-weight: 600; }
         #rvTooltip .m { opacity: .75; }
         .rv-tl-block { transition: filter .08s; }
         .rv-tl-block:hover { filter: brightness(1.15); box-shadow: 0 0 0 1.5px rgba(0,0,0,.35); }
@@ -352,7 +420,7 @@
         <h2>Where the day went</h2>
         <div class="rv-controls" id="dayControls"></div>
         <div class="rv-bars" id="dayBreakdown"></div>
-        <p class="cs-foot">Hours per high-level tag — the root of each task tree. Click a tag to open its tasks and highlight it in the timeline. All bars share one scale, so a task's bar is directly comparable to its tag's. Overlapping intervals inside a tag (a parent running alongside its own subtask) are counted once.</p>
+        <p class="cs-foot">Hours per high-level tag — the root of each task tree. Click a tag to open its tasks and highlight it in the timeline. All bars share one scale, so a task's bar is directly comparable to its tag's. Overlapping intervals inside a tag (a parent running alongside its own subtask) are counted once. Each row's % is its share of those tag hours, so rows can add to a little over 100%.</p>
     </div>
 
     <div class="section" id="sec-day-timeline">
@@ -361,7 +429,7 @@
         <p class="cs-foot">Every recorded work interval at its real clock time, coloured by tag. Blocks under 90s are hidden (they still count in totals). Red ticks are logged distractions. Hover a block for the task.</p>
     </div>
 
-    <div class="section">
+    <div class="section" id="sec-day-switching">
         <h2>Context Switching</h2>
         <div class="cs-summary" id="csSummary"></div>
         <div class="cs-grid">
@@ -383,12 +451,12 @@
         <div class="active-section" id="activeTableContainer"></div>
     </div>
 
-    <div class="section">
+    <div class="section" id="sec-day-tasks">
         <h2>Completed Tasks</h2>
         <div id="taskTableContainer"></div>
     </div>
 
-    <div class="section">
+    <div class="section" id="sec-day-insights">
         <h2>Insights</h2>
         <div class="insights" id="insights"></div>
     </div>
@@ -397,7 +465,7 @@
     <div id="rangeView" style="display:none;">
         <div class="cs-summary" id="rangeSummary"></div>
         <div class="rv-banner" id="rvBanner" style="display:none;">
-            <span class="grow"><b>No summary written for this week yet.</b></span>
+            <span class="grow"><b>No summary written for this <span class="rv-period-word">week</span> yet.</b></span>
             <button onclick="rvFocusEditor()">Write it now</button>
         </div>
         <p class="cs-foot" id="rvNoIntervalNote" style="display:none;color:var(--red);opacity:1;margin-bottom:12px"></p>
@@ -407,7 +475,7 @@
             <h2>Where the <span class="rv-period-word">week</span> went</h2>
             <div class="rv-controls" id="rvControls"></div>
             <div class="rv-bars" id="rvBreakdown"></div>
-            <p class="cs-foot">Hours per high-level tag — the root of each task tree. Click a tag to open its tasks and highlight it in the timeline. All bars share one scale, so a task's bar is directly comparable to its tag's. Overlapping intervals inside a tag (a parent running alongside its own subtask) are counted once, so tag hours can sum to slightly more than the tracked total when two different tags overlapped.</p>
+            <p class="cs-foot">Hours per high-level tag — the root of each task tree. Click a tag to open its tasks and highlight it in the timeline. All bars share one scale, so a task's bar is directly comparable to its tag's. Overlapping intervals inside a tag (a parent running alongside its own subtask) are counted once, so tag hours can sum to slightly more than the tracked total when two different tags overlapped. Each row's % is its share of those tag hours, so rows can add to a little over 100%.</p>
         </div>
 
         <div class="section" id="sec-timeline">
@@ -417,13 +485,14 @@
         </div>
 
         <div class="section" id="sec-estimates">
+            <h2>Against the estimate</h2>
             <div class="rv-two">
                 <div>
-                    <h2>Ran long</h2>
+                    <h3>Ran long</h3>
                     <div id="rvOverruns"></div>
                 </div>
                 <div>
-                    <h2>Came in under</h2>
+                    <h3>Came in under</h3>
                     <div id="rvWins"></div>
                 </div>
             </div>
@@ -434,6 +503,12 @@
             <h2>Carrying over</h2>
             <div id="rvLoose"></div>
             <p class="cs-foot">Tasks worked on in this range that are still open (ongoing, paused, or stashed).</p>
+        </div>
+
+        <div class="section" id="sec-weeks" style="display:none;">
+            <h2>Weekly summaries</h2>
+            <div id="rvWeeks"></div>
+            <p class="cs-foot">What you wrote at the end of each week this month touches. A week that starts in the previous month or runs into the next one is still listed whole — that's the week you actually wrote about.</p>
         </div>
 
         <div class="section" id="sec-write">
@@ -480,6 +555,7 @@
     </div><!-- /#rangeView -->
 
     <div id="rvTooltip"></div>
+    <div id="rvEditToast"></div>
     <div class="refresh-note">Auto-refreshes every 60s</div>
 
     <script>
@@ -983,6 +1059,15 @@
         return h ? `${h}h ${String(m).padStart(2, '0')}m` : `${m}m`;
     }
 
+    // A task's share of the range's tracked time (same denominator as the tag
+    // rows). Sub-1% keeps a decimal so a 20-minute task in a 60-hour week reads
+    // as 0.6% rather than a flat 0%.
+    function rvShare(seconds, denom) {
+        const p = seconds / denom * 100;
+        if (p < 0.1) return '<0.1%';
+        return p < 1 ? `${p.toFixed(1)}%` : `${p.toFixed(0)}%`;
+    }
+
     function rvColor(tagId) { return _rvColors[tagId] || '#9AA0A6'; }
 
     function clockLabel(minute) {
@@ -1091,7 +1176,7 @@
                     <span class="rv-caret placeholder"></span>
                     <div class="nm">${t.is_root ? '' : '↳ '}${esc(t.name)}${openBadge}</div>
                     <div class="rv-bar-track thin"><div class="rv-bar-fill" style="width:${Math.max(0.25, t.seconds / scale * 100).toFixed(2)}%;background:${rvColor(tag.id)};opacity:.62"></div></div>
-                    <div class="val"><b>${fmtH(t.seconds)}</b> · ${ratio} · ${when} ${t.first_start.slice(11, 16)}</div>
+                    <div class="val"><b>${fmtH(t.seconds)}</b> <span class="share" title="share of tracked time in this range">(${rvShare(t.seconds, denom)})</span> · ${ratio} · ${when} ${t.first_start.slice(11, 16)}</div>
                 </div>`;
             }).join('');
             const more = hidden > 0
@@ -1132,7 +1217,15 @@
                 const t = b.start.slice(11, 16);
                 const end = b.start.slice(0, 11) + String(Math.floor(b.end_minute / 60)).padStart(2, '0')
                             + ':' + String(b.end_minute % 60).padStart(2, '0');
-                return `<div class="rv-tl-block${dim}" style="left:${left.toFixed(2)}%;width:${width.toFixed(2)}%;background:${rvColor(b.tag_id)}"
+                const edit = b.editable
+                    ? `data-task="${esc(b.task_id)}" data-ivs="${b.interval_indices.join(',')}"`
+                      + ` data-starts="${b.interval_starts.join('|')}" data-ends="${b.interval_ends.join('|')}"`
+                      + ` data-rsmax="${b.resize_start_max}" data-remin="${b.resize_end_min}"`
+                      + ` data-start="${b.start}" data-end="${b.end}"`
+                    : `data-lock="${esc(b.lock_reason)}"`;
+                const cls = `rv-tl-block${dim} ${b.editable ? 'editable' : 'locked'}`;
+                return `<div class="${cls}" ${edit}
+                     style="left:${left.toFixed(2)}%;width:${width.toFixed(2)}%;background:${rvColor(b.tag_id)}"
                      data-name="${esc(b.name)}" data-tag="${esc(b.tag)}"
                      data-when="${t}–${end.slice(11)}" data-dur="${fmtH(b.minutes * 60)}">${label}</div>`;
             }).join('');
@@ -1144,11 +1237,201 @@
             const hrs = d.seconds > 0 ? fmtH(d.seconds) : '—';
             return `<div class="rv-tl-day">
                 <div class="rv-tl-label"><b>${wd} ${dd}</b> · ${hrs}</div>
-                <div class="rv-tl-track">${grid}${blocks}${ticks}</div>
+                <div class="rv-tl-track" data-lo="${lo}" data-hi="${hi}" data-date="${d.date}">${grid}${blocks}${ticks}</div>
             </div>`;
         }).join('');
         el.innerHTML = `<div class="rv-tl-hours">${ruler}</div>${rows}`;
     }
+
+    // ----------------------------------------------------------------- //
+    // Dragging a block edits the interval behind it
+    // ----------------------------------------------------------------- //
+    // Only blocks the server marked editable are draggable — those are the ones
+    // that came from exactly one stored interval, so the edit maps back without
+    // guessing. Grab the body to slide the block (duration held exactly, down to
+    // the microsecond); grab an edge to stretch it.
+
+    // Stamped in when this page was served. Sent with every write so the server
+    // can tell a tab left open across a dashboard restart to reload, instead of
+    // rejecting it for reasons that read like a bug.
+    const RV_PAGE_VERSION = '{{ page_version }}';
+
+    const RV_SNAP_MINUTES = 5;
+    const RV_MIN_MINUTES = 5;          // a stretch can't collapse a block to nothing
+    const RV_EDGE_PX = 6;
+    let _rvDrag = null;
+
+    function rvToast(html, isError = false) {
+        const el = document.getElementById('rvEditToast');
+        el.innerHTML = html;
+        el.classList.toggle('err', isError);
+        el.style.display = 'block';
+        clearTimeout(el._hide);
+        if (isError) el._hide = setTimeout(() => { el.style.display = 'none'; }, 6000);
+    }
+
+    function rvHideToast() {
+        const el = document.getElementById('rvEditToast');
+        clearTimeout(el._hide);
+        el.style.display = 'none';
+    }
+
+    // Local wall-clock ISO, matching what Python's datetime.isoformat() writes.
+    // toISOString() would hand the server UTC and silently shift every edit.
+    function rvLocalIso(ms) {
+        const d = new Date(ms);
+        const p = (n, w = 2) => String(n).padStart(w, '0');
+        const base = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+                   + `T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+        return d.getMilliseconds() ? `${base}.${p(d.getMilliseconds(), 3)}` : base;
+    }
+
+    function rvClockOfDay(minutes) {
+        const m = Math.round(minutes);
+        return `${String(Math.floor(m / 60) % 24).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+    }
+
+    function rvEdgeAt(block, clientX) {
+        const r = block.getBoundingClientRect();
+        if (clientX - r.left <= RV_EDGE_PX) return 'start';
+        if (r.right - clientX <= RV_EDGE_PX) return 'end';
+        return 'move';
+    }
+
+    // Cursor feedback before you commit to a grab. Only the one block under the
+    // pointer is touched — a month view has hundreds, so no sweeping the DOM.
+    let _rvEdgeHint = null;
+    document.addEventListener('mousemove', (e) => {
+        if (_rvDrag) return;
+        const b = e.target.closest('.rv-tl-block.editable');
+        const wants = b && rvEdgeAt(b, e.clientX) !== 'move' ? b : null;
+        if (wants === _rvEdgeHint) return;
+        if (_rvEdgeHint) _rvEdgeHint.classList.remove('on-edge');
+        if (wants) wants.classList.add('on-edge');
+        _rvEdgeHint = wants;
+    });
+
+    document.addEventListener('mousedown', (e) => {
+        const block = e.target.closest('.rv-tl-block.editable');
+        if (!block || e.button !== 0) return;
+        const track = block.parentElement;
+        const lo = Number(track.dataset.lo), hi = Number(track.dataset.hi);
+        const width = track.clientWidth;
+        if (!width || !(hi > lo)) return;
+
+        const startMs = Date.parse(block.dataset.start);
+        const endMs = Date.parse(block.dataset.end);
+        const [y, mo, dd] = track.dataset.date.split('-').map(Number);
+        const dayMs = new Date(y, mo - 1, dd).getTime();
+
+        // A block can be a run of several intervals. Stretching the left edge
+        // moves the interval that owns it, so it can't be dragged past that
+        // interval's own end (for a single-interval block these coincide).
+        const rsMax = Date.parse(block.dataset.rsmax);
+        const reMin = Date.parse(block.dataset.remin);
+        _rvDrag = {
+            block, track, lo, hi, dayMs, startMs, endMs,
+            mode: rvEdgeAt(block, e.clientX),
+            minutesPerPx: (hi - lo) / width,
+            originX: e.clientX,
+            fromMin: (startMs - dayMs) / 60000,
+            toMin: (endMs - dayMs) / 60000,
+            startCeilMin: (rsMax - dayMs) / 60000,
+            endFloorMin: (reMin - dayMs) / 60000,
+            moved: false,
+        };
+        _rvDrag.newFrom = _rvDrag.fromMin;
+        _rvDrag.newTo = _rvDrag.toMin;
+        block.classList.add('dragging');
+        track.classList.add('drop-target');
+        document.getElementById('rvTooltip').style.display = 'none';
+        e.preventDefault();
+    });
+
+    document.addEventListener('mousemove', (e) => {
+        if (!_rvDrag) return;
+        const d = _rvDrag;
+        const snap = (m) => Math.round(m / RV_SNAP_MINUTES) * RV_SNAP_MINUTES;
+        const clamp = (m, min, max) => Math.min(max, Math.max(min, m));
+        const delta = (e.clientX - d.originX) * d.minutesPerPx;
+        const span = d.toMin - d.fromMin;
+
+        if (Math.abs(e.clientX - d.originX) > 2) d.moved = true;
+
+        if (d.mode === 'move') {
+            // Clamped to the visible axis: a block dragged off the track would
+            // just disappear. The axis refits to the new time after saving.
+            d.newFrom = clamp(snap(d.fromMin + delta), d.lo, d.hi - span);
+            d.newTo = d.newFrom + span;
+        } else if (d.mode === 'start') {
+            d.newFrom = clamp(snap(d.fromMin + delta), d.lo, d.startCeilMin - RV_MIN_MINUTES);
+            d.newTo = d.toMin;
+        } else {
+            d.newTo = clamp(snap(d.toMin + delta), d.endFloorMin + RV_MIN_MINUTES, d.hi);
+            d.newFrom = d.fromMin;
+        }
+
+        const pos = (m) => (m - d.lo) / (d.hi - d.lo) * 100;
+        d.block.style.left = pos(d.newFrom).toFixed(2) + '%';
+        d.block.style.width = Math.max(0.35, pos(d.newTo) - pos(d.newFrom)).toFixed(2) + '%';
+
+        const shifted = Math.round(d.newFrom - d.fromMin);
+        const note = d.mode === 'move'
+            ? (shifted ? ` · ${shifted > 0 ? '+' : ''}${shifted} min` : ' · unchanged')
+            : ` · ${fmtH((d.newTo - d.newFrom) * 60)}`;
+        rvToast(`<b>${esc(d.block.dataset.name || 'block')}</b> `
+              + `${rvClockOfDay(d.newFrom)}–${rvClockOfDay(d.newTo)}${note}`);
+    });
+
+    document.addEventListener('mouseup', async () => {
+        if (!_rvDrag) return;
+        const d = _rvDrag;
+        _rvDrag = null;
+        d.block.classList.remove('dragging');
+        d.track.classList.remove('drop-target');
+
+        const unchanged = !d.moved
+            || (Math.abs(d.newFrom - d.fromMin) < 1e-6 && Math.abs(d.newTo - d.toMin) < 1e-6);
+        if (unchanged) {
+            rvHideToast();
+            renderRvTimeline();                 // snap the block back to truth
+            return;
+        }
+
+        // Send only the edge that was dragged. The server carries the other one
+        // over from storage, so a move keeps its duration to the microsecond and
+        // a stretch never nudges the edge you didn't touch — neither survives a
+        // round trip through a JS Date, which only holds milliseconds.
+        const mode = d.mode === 'move' ? 'move'
+                   : d.mode === 'start' ? 'resize_start' : 'resize_end';
+        const edgeMs = d.mode === 'end' ? d.dayMs + d.newTo * 60000
+                                        : d.dayMs + d.newFrom * 60000;
+
+        try {
+            const res = await fetch('/api/interval', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    page_version: RV_PAGE_VERSION,
+                    task_id: d.block.dataset.task,
+                    interval_indices: d.block.dataset.ivs.split(',').map(Number),
+                    expected: d.block.dataset.starts.split('|').map((s, i) => ({
+                        start: s, end: d.block.dataset.ends.split('|')[i],
+                    })),
+                    mode,
+                    edge: rvLocalIso(edgeMs),
+                }),
+            });
+            const body = await res.json();
+            if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+            rvToast(`Saved · <b>${esc(d.block.dataset.name || 'block')}</b> `
+                  + `now ${rvClockOfDay(d.newFrom)}–${rvClockOfDay(d.newTo)}`);
+            setTimeout(rvHideToast, 2500);
+        } catch (err) {
+            rvToast(`Couldn't save: ${esc(String(err.message || err))}`, true);
+        }
+        await fetchAndRender(datePicker.value || null);
+    });
 
     // Delegated hover — blocks can be 3px wide, so a real tooltip beats title=.
     (function wireTimelineTooltip() {
@@ -1157,9 +1440,12 @@
         host.addEventListener('mouseover', (e) => {
             const b = e.target.closest('.rv-tl-block');
             if (!b) return;
+            if (_rvDrag) return;                       // the toast is the readout mid-drag
             tip.innerHTML = `<div class="t">${b.dataset.name || '(unnamed)'}</div>` +
                 `<div class="m">${b.dataset.tag}</div>` +
-                `<div class="m">${b.dataset.when} · ${b.dataset.dur}</div>`;
+                `<div class="m">${b.dataset.when} · ${b.dataset.dur}</div>` +
+                (b.dataset.lock ? `<div class="m">🔒 ${b.dataset.lock}</div>`
+                                : `<div class="m">drag to move · edges to stretch</div>`);
             tip.style.display = 'block';
         });
         host.addEventListener('mousemove', (e) => {
@@ -1306,10 +1592,63 @@
 
     const RV_PERIOD_WORD = { day: 'day', week: 'week', month: 'month' };
 
+    function rvWeekLabel(startIso, endIso) {
+        const fmt = (iso, withMonth) => {
+            const [y, m, d] = iso.split('-').map(Number);
+            const dt = new Date(y, m - 1, d);
+            return withMonth
+                ? dt.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+                : String(dt.getDate());
+        };
+        const sameMonth = startIso.slice(0, 7) === endIso.slice(0, 7);
+        return `${fmt(startIso, true)} – ${fmt(endIso, !sameMonth)}`;
+    }
+
+    // The month view is read by looking back over the weeks inside it, so it
+    // shows what was written for each — including the ones left blank, which is
+    // the only place a missed week is visible.
+    function renderRvWeeks(data) {
+        const sec = document.getElementById('sec-weeks');
+        const weeks = data.week_summaries || [];
+        if (data.period !== 'month' || !weeks.length) { sec.style.display = 'none'; return; }
+        sec.style.display = '';
+
+        const written = weeks.filter(w => (w.text || '').trim()).length;
+        document.getElementById('rvWeeks').innerHTML = weeks.map(w => {
+            const has = (w.text || '').trim();
+            const when = w.updated_at
+                ? `written ${w.updated_at.slice(0, 16).replace('T', ' ')}` : '';
+            return `<div class="rv-week${has ? '' : ' empty'}">
+                <div class="rv-week-head">
+                    <b>${esc(rvWeekLabel(w.start, w.end))}</b>
+                    <span class="when">${esc(when)}</span>
+                    <span class="grow"></span>
+                    <button onclick="rvOpenWeek('${w.start}')">open this week →</button>
+                </div>
+                <p>${has ? esc(w.text) : 'Nothing written for this week.'}</p>
+            </div>`;
+        }).join('') + `<p class="cs-foot" style="margin-top:10px">${written} of ${weeks.length} weeks written.</p>`;
+    }
+
+    // Jump from a week card into that week's own review.
+    function rvOpenWeek(startIso) {
+        currentPeriod = 'week';
+        document.querySelectorAll('#periodToggle button').forEach(
+            b => b.classList.toggle('active', b.dataset.period === 'week'));
+        datePicker.value = startIso;
+        fetchAndRender(startIso);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
     function renderReview(data) {
         _rvData = data.review;
+        const periodWord = RV_PERIOD_WORD[data.period] || 'week';
         document.querySelectorAll('.rv-period-word').forEach(
-            el => { el.textContent = RV_PERIOD_WORD[data.period] || 'week'; });
+            el => { el.textContent = periodWord; });
+        // The placeholder is an attribute, so the .rv-period-word sweep can't
+        // reach it — it's what makes an empty month editor still say "week".
+        document.getElementById('rvEditor').placeholder =
+            `So, what happened this ${periodWord}?\n\n(saves itself — ⌘S to save right now)`;
         _rvPeriodKey = `${data.period}-${data.start}`;
         _rvColors = {};
         _rvData.tags.forEach((t, i) => { _rvColors[t.id] = RV_PALETTE[i % RV_PALETTE.length]; });
@@ -1324,6 +1663,7 @@
         document.getElementById('rvSummary').textContent = _rvData.summary_text;
         // The writing box belongs to the week/month view only.
         if (data.period !== 'day') renderRvMine(data);
+        renderRvWeeks(data);
         const foot = document.getElementById('rvNoIntervalNote');
         if (_rvData.no_interval_tasks > 0) {
             foot.style.display = '';
@@ -1433,6 +1773,64 @@
 
     // Sidebar: built from whichever view is visible, with scroll-spy.
     let _rvNavSpy = null;
+    // ----------------------------------------------------------------- //
+    // Collapsible sections
+    // ----------------------------------------------------------------- //
+    // Which sections are folded is remembered across reloads, keyed by section
+    // id. Sections are re-rendered constantly (every 60s refresh, every period
+    // switch), so the state lives outside the DOM and is reapplied each time.
+
+    const RV_COLLAPSE_KEY = 'etime.collapsedSections';
+
+    function rvLoadCollapsed() {
+        try {
+            const raw = JSON.parse(localStorage.getItem(RV_COLLAPSE_KEY) || '[]');
+            return new Set(Array.isArray(raw) ? raw : []);
+        } catch (e) {
+            return new Set();
+        }
+    }
+
+    let _rvCollapsed = rvLoadCollapsed();
+
+    function rvSaveCollapsed() {
+        try {
+            localStorage.setItem(RV_COLLAPSE_KEY, JSON.stringify([..._rvCollapsed]));
+        } catch (e) {
+            /* private browsing or a full quota — folding still works this session */
+        }
+    }
+
+    function rvToggleSection(sec) {
+        const collapsing = !sec.classList.contains('collapsed');
+        sec.classList.toggle('collapsed', collapsing);
+        if (collapsing) _rvCollapsed.add(sec.id); else _rvCollapsed.delete(sec.id);
+        rvSaveCollapsed();
+        // A Chart.js chart built inside a collapsed section measures its
+        // container at zero and never recovers — resize() re-reads the same
+        // latched size. Rebuilding it is the only reliable fix, so unfolding a
+        // chart section re-renders the view. It's a localhost round trip on a
+        // deliberate click, and it keeps the charts honest.
+        if (!collapsing && sec.querySelector('canvas')) {
+            fetchAndRender(datePicker.value || null);
+        }
+    }
+
+    // Applied after every render, since innerHTML swaps drop the class.
+    function rvApplySectionState() {
+        for (const sec of document.querySelectorAll('.section')) {
+            if (!sec.id) continue;
+            if (!sec.querySelector(':scope > h2')) continue;
+            sec.classList.toggle('collapsed', _rvCollapsed.has(sec.id));
+        }
+    }
+
+    document.addEventListener('click', (e) => {
+        const h2 = e.target.closest('.section > h2');
+        if (!h2) return;
+        rvToggleSection(h2.parentElement);
+    });
+
     function buildNav() {
         const nav = document.getElementById('rvNav');
         const root = currentPeriod === 'day'
@@ -1476,6 +1874,7 @@
         renderRangeCalibration(data.calibration);
         renderCalibStats(data.calibration);
         buildNav();
+        rvApplySectionState();
     }
 
     async function fetchAndRenderDay(selectedDate) {
@@ -1508,6 +1907,7 @@
         window._deterredData = data.deterred;
         renderInsights(data.stats, data.tasks, data.distractions);
         buildNav();
+        rvApplySectionState();
     }
 
     async function fetchAndRender(selectedDate = null) {
@@ -1550,7 +1950,7 @@
     });
 
     // Auto-refresh every 60s (use current picker value)
-    setInterval(() => fetchAndRender(datePicker.value), 60000);
+    setInterval(() => { if (!_rvDrag) fetchAndRender(datePicker.value); }, 60000);
     </script>
 </body>
 </html>

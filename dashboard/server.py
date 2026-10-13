@@ -4,13 +4,15 @@ import argparse
 import calendar
 import json
 import os
+import shutil
+import tempfile
 from datetime import datetime, date, timedelta
 from pathlib import Path
 from typing import Optional
 
 from flask import Flask, jsonify, render_template, request
 
-from .review import build_review, review_to_dict
+from .review import build_review, review_to_dict, union_seconds
 
 # Resolve paths without importing config (avoids PyQt6 dependency chain)
 ETIME_DIR = Path.home() / ".etime"
@@ -19,6 +21,30 @@ ACTIVE_FILE = ETIME_DIR / "active.json"
 SUMMARY_FILE = ETIME_DIR / "weekly_summaries.json"
 DISTRACTION_FILE = Path.home() / "Dev" / "DistractionCount" / "distraction_count.txt"
 DETERRED_FILE = Path.home() / "Dev" / "DistractionCount" / "deterred_count.txt"
+BACKUP_DIR = Path.home() / "Dev" / "etime" / "claude_data"
+
+# history.jsonl is the user's whole time log. Every edit leaves a timestamped
+# copy behind; only the newest few are kept so the directory doesn't grow without
+# bound.
+HISTORY_BACKUPS_KEPT = 20
+
+# Guards on an edited interval. A day is already absurd for one work interval;
+# anything past it is a dropped timezone or a bad drag, not a real session.
+MAX_INTERVAL_SECONDS = 24 * 60 * 60
+
+
+def _page_version() -> str:
+    """Identifies the page a tab is running, so writes from a stale one are caught.
+
+    A tab left open across a server restart keeps its old JavaScript and goes on
+    speaking the old payload shape. Without this the mismatch surfaces as an
+    unexplained rejection; with it the page can say "reload".
+    """
+    try:
+        stat = (Path(__file__).parent / "templates" / "index.html").stat()
+        return f"{int(stat.st_mtime)}-{stat.st_size}"
+    except OSError:
+        return "unknown"
 
 app = Flask(__name__)
 
@@ -305,7 +331,8 @@ def index():
             target = _date_filter or date.today()
     else:
         target = _date_filter or date.today()
-    return render_template("index.html", date_str=target.isoformat())
+    return render_template("index.html", date_str=target.isoformat(),
+                           page_version=_page_version())
 
 
 @app.route("/api/data")
@@ -454,7 +481,32 @@ def api_range():
         "summary": _load_summaries().get(
             _summary_key(period, dates[0]), {"text": "", "updated_at": ""}
         ),
+        # A month is reviewed by reading back the weeks inside it, so the month
+        # view carries them along. Other periods don't need it: a week view is
+        # already showing its own entry in the editor.
+        "week_summaries": _week_summaries(dates) if period == "month" else [],
     })
+
+
+def _week_summaries(dates: list[date]) -> list[dict]:
+    """Written summaries for every Monday-start week the range touches.
+
+    Weeks with nothing written are included too — a gap in the record is worth
+    seeing, and it's also the affordance for going and filling it in.
+    """
+    summaries = _load_summaries()
+    mondays = sorted({d - timedelta(days=d.weekday()) for d in dates})
+    out = []
+    for monday in mondays:
+        entry = summaries.get(_summary_key("week", monday), {})
+        out.append({
+            "key": _summary_key("week", monday),
+            "start": monday.isoformat(),
+            "end": (monday + timedelta(days=6)).isoformat(),
+            "text": entry.get("text", ""),
+            "updated_at": entry.get("updated_at", ""),
+        })
+    return out
 
 
 def _summary_key(period: str, start: date) -> str:
@@ -498,6 +550,184 @@ def api_summary():
     if not key:
         return jsonify({"error": "missing key"}), 400
     return jsonify(_save_summary(key, str(payload.get("text", ""))))
+
+
+def _backup_history() -> Path:
+    """Timestamped copy of history.jsonl, pruned to the newest few."""
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+    dest = BACKUP_DIR / f"history.jsonl.{stamp}.bak"
+    shutil.copy2(HISTORY_FILE, dest)
+
+    old = sorted(BACKUP_DIR.glob("history.jsonl.*.bak"))[:-HISTORY_BACKUPS_KEPT]
+    for stale in old:
+        stale.unlink(missing_ok=True)
+    return dest
+
+
+def _rewrite_history_line(index: int, task: dict) -> None:
+    """Replace one line of history.jsonl, leaving every other byte untouched."""
+    lines = HISTORY_FILE.read_text().splitlines(keepends=True)
+    trailing_newline = lines[index].endswith("\n")
+    lines[index] = json.dumps(task) + ("\n" if trailing_newline else "")
+
+    fd, tmp = tempfile.mkstemp(dir=str(ETIME_DIR), prefix=".history_", suffix=".jsonl.tmp")
+    with os.fdopen(fd, "w") as f:
+        f.writelines(lines)
+    os.replace(tmp, HISTORY_FILE)
+
+
+def _find_history_line(task_id: str) -> tuple[int, dict]:
+    """Locate a task in history.jsonl by id. Raises if it isn't uniquely there."""
+    matches: list[tuple[int, dict]] = []
+    for i, line in enumerate(HISTORY_FILE.read_text().splitlines()):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            task = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if task.get("id") == task_id:
+            matches.append((i, task))
+
+    if not matches:
+        raise LookupError(f"task {task_id} is not in history.jsonl")
+    if len(matches) > 1:
+        raise LookupError(
+            f"task {task_id} appears {len(matches)} times in history.jsonl — "
+            f"refusing to guess which one to edit"
+        )
+    return matches[0]
+
+
+@app.route("/api/interval", methods=["POST"])
+def api_interval():
+    """Move or stretch the run of work intervals behind one timeline block.
+
+    Deliberately narrow. Only completed tasks are touched (etime rewrites
+    active.json from memory and would clobber anything written here), only the
+    exact intervals the client last saw are touched, and the whole edit is
+    rejected rather than approximated if anything doesn't line up.
+
+    A move slides every interval in the run by the same amount, so durations and
+    the gaps between them survive untouched. A stretch moves one edge, and only
+    the interval that owns that edge changes.
+    """
+    payload = request.get_json(silent=True) or {}
+    task_id = str(payload.get("task_id", "")).strip()
+    if not task_id:
+        return jsonify({"error": "missing task_id"}), 400
+
+    # A tab open across a dashboard restart still speaks the old payload shape.
+    # Say so plainly instead of letting it surface as a parse failure.
+    if str(payload.get("page_version", "")) != _page_version():
+        return jsonify({
+            "error": "this page was loaded before the dashboard was updated — "
+                     "reload it (⌘R) and try again"
+        }), 409
+
+    mode = str(payload.get("mode", ""))
+    if mode not in ("move", "resize_start", "resize_end"):
+        return jsonify({"error": f"unknown mode {mode!r}"}), 400
+
+    try:
+        indices = [int(i) for i in payload["interval_indices"]]
+        expected = list(payload["expected"])
+        # The client sends only the edge it dragged. Everything else is carried
+        # over from storage, so sub-millisecond precision that a browser Date
+        # can't represent survives the round trip.
+        edge = datetime.fromisoformat(payload["edge"])
+    except (KeyError, TypeError, ValueError) as exc:
+        return jsonify({"error": f"bad payload: {exc}"}), 400
+
+    if not indices or len(indices) != len(expected):
+        return jsonify({"error": "interval_indices and expected must line up"}), 400
+
+    if any(t.get("id") == task_id for t in _load_active()):
+        return jsonify({
+            "error": "that task is still open in etime, which owns active.json — "
+                     "finish it there first"
+        }), 409
+
+    try:
+        line_no, task = _find_history_line(task_id)
+    except LookupError as exc:
+        return jsonify({"error": str(exc)}), 404
+
+    intervals = task.get("work_intervals") or []
+    for index in indices:
+        if not 0 <= index < len(intervals):
+            return jsonify({"error": f"interval {index} does not exist"}), 404
+
+    # Compare as datetimes, not strings: isoformat() drops zero microseconds, so
+    # a stored "...T15:01:23.000000" and the "...T15:01:23" the client was handed
+    # are the same instant spelled two ways.
+    def _same_instant(stored: Optional[str], claimed: str) -> bool:
+        if not stored:
+            return False
+        try:
+            return datetime.fromisoformat(stored) == datetime.fromisoformat(claimed)
+        except (TypeError, ValueError):
+            return False
+
+    stale = any(
+        not (_same_instant(intervals[i].get("start"), exp.get("start", ""))
+             and _same_instant(intervals[i].get("end"), exp.get("end", "")))
+        for i, exp in zip(indices, expected)
+    )
+    if stale:
+        return jsonify({
+            "error": "this block changed since the page loaded — reload and retry"
+        }), 409
+
+    run = [(i, datetime.fromisoformat(intervals[i]["start"]),
+            datetime.fromisoformat(intervals[i]["end"])) for i in indices]
+    before = union_seconds([(s, e) for _, s, e in run])
+
+    if mode == "move":
+        shift = edge - min(s for _, s, _ in run)
+        updated = {i: (s + shift, e + shift) for i, s, e in run}
+    elif mode == "resize_start":
+        owner = min(run, key=lambda p: p[1])[0]
+        updated = {i: (edge if i == owner else s, e) for i, s, e in run}
+    else:
+        owner = max(run, key=lambda p: p[2])[0]
+        updated = {i: (s, edge if i == owner else e) for i, s, e in run}
+
+    for i, (s, e) in updated.items():
+        if e <= s:
+            return jsonify({"error": "that would make an interval end before it starts"}), 400
+        if (e - s).total_seconds() > MAX_INTERVAL_SECONDS:
+            return jsonify({"error": "that would make an interval longer than a day"}), 400
+        if s.date() != e.date():
+            return jsonify({"error": "that would push an interval across midnight"}), 400
+
+    after = union_seconds(list(updated.values()))
+
+    backup = _backup_history()
+    for i, (s, e) in updated.items():
+        intervals[i]["start"] = s.isoformat()
+        intervals[i]["end"] = e.isoformat()
+    # elapsed_seconds is the app's own timer accumulator, not a sum of intervals
+    # (older tasks predate interval tracking). Shift it by the change rather than
+    # recomputing, so any pre-existing gap between the two survives the edit. A
+    # move doesn't change the total at all, so it doesn't touch the field —
+    # adding and subtracting the same delta would leave float noise behind.
+    if after != before:
+        task["elapsed_seconds"] = max(
+            0.0, round(task.get("elapsed_seconds", 0.0) + after - before, 6)
+        )
+    _rewrite_history_line(index=line_no, task=task)
+
+    return jsonify({
+        "ok": True,
+        "task_id": task_id,
+        "intervals": [{"index": i, "start": intervals[i]["start"], "end": intervals[i]["end"]}
+                      for i in sorted(updated)],
+        "elapsed_seconds": task.get("elapsed_seconds"),
+        "backup": str(backup),
+    })
 
 
 def main():
