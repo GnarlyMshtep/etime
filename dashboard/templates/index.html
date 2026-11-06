@@ -308,11 +308,6 @@
         .rv-tl-track.drop-target { background: #eef2f7; }
         .rv-tl-tick { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--red); opacity: .55; }
         .rv-tl-tick.deterred { background: var(--green); }
-        /* Foreground time on apps you called distracting, from the app sampler. */
-        .rv-tl-blocked { position: absolute; bottom: 0; height: 5px; background: var(--red); opacity: .8; }
-        /* Open but untouched -- a window left in front, not time spent on it. */
-        .rv-tl-blocked.idle { opacity: .28; }
-        .rv-tl-blk { color: var(--red); }
 
         .rv-two { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
         @media (max-width: 860px) { .rv-two { grid-template-columns: 1fr; }
@@ -1300,41 +1295,13 @@
             }).join('');
             const ticks = tickMarks(d.distraction_times, '', 'distraction')
                         + tickMarks(d.deterred_times, 'deterred', 'deterred');
-            // A strip along the bottom of the track for time in front of a
-            // blocked app. Native title tooltip: the rich one is for editable
-            // task blocks, and this band isn't editable.
-            const band = (d.blocked_spans || []).map(s => {
-                if (s.end_minute < lo || s.start_minute > hi) return '';
-                const left = pos(s.start_minute), width = Math.max(0.3, pos(s.end_minute) - left);
-                const quiet = s.active_minutes < s.minutes * 0.25 ? ' idle' : '';
-                const sub = quiet ? ', barely touched' : '';
-                return `<div class="rv-tl-blocked${quiet}" style="left:${left.toFixed(2)}%;width:${width.toFixed(2)}%"
-                     title="${esc(s.app)} ${s.start}–${s.end} · ${fmtH(s.minutes * 60)}${sub}"></div>`;
-            }).join('');
             const hrs = d.seconds > 0 ? fmtH(d.seconds) : '—';
-            const blk = d.blocked_seconds > 0
-                ? ` · <span class="rv-tl-blk" title="${esc(Object.entries(d.blocked_by_app || {})
-                      .map(([a, sec]) => a + ' ' + fmtH(sec)).join(', '))}">${fmtH(d.blocked_seconds)} off${
-                      d.blocked_visits ? ` · ${d.blocked_visits}×` : ''}</span>`
-                : '';
             return `<div class="rv-tl-day">
-                <div class="rv-tl-label"><b>${wd} ${dd}</b> · ${hrs}${blk}</div>
-                <div class="rv-tl-track" data-lo="${lo}" data-hi="${hi}" data-date="${d.date}">${grid}${blocks}${ticks}${band}</div>
+                <div class="rv-tl-label"><b>${wd} ${dd}</b> · ${hrs}</div>
+                <div class="rv-tl-track" data-lo="${lo}" data-hi="${hi}" data-date="${d.date}">${grid}${blocks}${ticks}</div>
             </div>`;
         }).join('');
-        // One line about the band: what it is, or why there isn't one. An empty
-        // band must never be read as a day with no distractions.
-        const notes = new Set(_rvData.days.map(d => d.usage_note).filter(Boolean));
-        const anyBand = _rvData.days.some(d => (d.blocked_spans || []).length);
-        let foot = '';
-        if (anyBand) {
-            foot = `<p class="cs-foot">The red strip along the bottom of each day is
-                    foreground time on the apps in <code>~/.etime/blocked_apps.json</code>.
-                    Faded means the app was in front but untouched. Hover for which app.</p>`;
-        } else if (notes.size) {
-            foot = `<p class="cs-foot">No distraction band: ${esc([...notes].join('; '))}.</p>`;
-        }
-        el.innerHTML = `<div class="rv-tl-hours">${ruler}</div>${rows}${foot}`;
+        el.innerHTML = `<div class="rv-tl-hours">${ruler}</div>${rows}`;
     }
 
     // ----------------------------------------------------------------- //

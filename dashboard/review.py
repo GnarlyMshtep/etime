@@ -117,14 +117,6 @@ class DayRow:
     deterred_times: list[str]       # "HH:MM", distractions resisted
     by_tag: dict[str, float]
     blocks: list[Block]
-    # Foreground time on the apps you call distracting, from the optional app
-    # sampler. Empty when it isn't running -- `usage_note` says which, so an
-    # empty band is never read as a clean day.
-    blocked_seconds: float = 0.0
-    blocked_visits: int = 0
-    blocked_spans: list[dict] = field(default_factory=list)
-    blocked_by_app: dict[str, float] = field(default_factory=dict)
-    usage_note: str = ""
 
 
 @dataclass
@@ -331,19 +323,6 @@ def _hm(seconds: float) -> str:
 # Main entry point
 # --------------------------------------------------------------------------- #
 
-def _usage_fields(usage: Optional[dict]) -> dict:
-    """Map one day of app-sampler output onto the DayRow fields."""
-    if not usage:
-        return {}
-    return {
-        "blocked_seconds": usage.get("blocked_seconds", 0.0),
-        "blocked_visits": usage.get("visits", 0),
-        "blocked_spans": usage.get("spans", []),
-        "blocked_by_app": usage.get("by_app", {}),
-        "usage_note": usage.get("note", ""),
-    }
-
-
 def build_review(
     *,
     history: list[dict],
@@ -352,7 +331,6 @@ def build_review(
     distractions_by_day: dict[str, int],
     distraction_times_by_day: Optional[dict[str, list[str]]] = None,
     deterred_times_by_day: Optional[dict[str, list[str]]] = None,
-    usage_by_day: Optional[dict[str, dict]] = None,
     now: Optional[datetime] = None,
 ) -> Review:
     """Aggregate everything the weekly-review UI needs for ``dates``."""
@@ -538,12 +516,6 @@ def build_review(
         for b in blocks:
             day_min = min(day_min, b.start_minute)
             day_max = max(day_max, b.end_minute)
-        # The band widens the window too. Distraction before the first task or
-        # after the last is counted in the day's total, so it has to be drawable
-        # as well -- otherwise the strip silently disagrees with the label.
-        for span in (usage_by_day or {}).get(d.isoformat(), {}).get("spans", []):
-            day_min = min(day_min, span["start_minute"])
-            day_max = max(day_max, span["end_minute"])
         day_rows.append(DayRow(
             date=d.isoformat(),
             seconds=round(union_seconds(day_ivs), 1),
@@ -552,7 +524,6 @@ def build_review(
             deterred_times=(deterred_times_by_day or {}).get(d.isoformat(), []),
             by_tag={k: round(v, 1) for k, v in by_tag.items()},
             blocks=blocks,
-            **_usage_fields((usage_by_day or {}).get(d.isoformat())),
         ))
     if day_max <= day_min:
         day_min, day_max = 8 * 60, 22 * 60

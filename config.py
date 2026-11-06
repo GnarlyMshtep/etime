@@ -74,30 +74,6 @@ DASHBOARD_PID_FILE = ETIME_DIR / "dashboard.pid"
 DISTRACTION_FILE = Path.home() / "Dev" / "DistractionCount" / "distraction_count.txt"
 DETERRED_FILE = Path.home() / "Dev" / "DistractionCount" / "deterred_count.txt"
 
-# App usage sampling -- which app was in front, for the distraction band on the
-# timeline. See app_sampler.py.
-APP_USAGE_FILE = ETIME_DIR / "app_usage.jsonl"
-APP_SAMPLER_PID_FILE = ETIME_DIR / "app_sampler.pid"
-APP_SAMPLE_SECONDS = 5           # how often the frontmost app is read
-APP_SEGMENT_MAX_SECONDS = 300    # a long run is written out in chunks, so a
-                                 # crash loses at most this much
-APP_IDLE_SECONDS = 120           # no keyboard or mouse for this long: not at
-                                 # the machine, so the run stops here
-
-# The apps and sites you call distracting. etime's own file, so this works with
-# no Raycast installed; scripts/import_raycast_blocklist.py seeds it from your
-# Raycast Focus categories if you'd rather not type the list twice.
-BLOCKED_APPS_FILE = ETIME_DIR / "blocked_apps.json"
-
-# Where that importer looks. Read once, by hand, never by the dashboard: it's
-# inside a Group Container, which macOS gates behind a permission prompt, and
-# its format is Raycast's to change.
-RAYCAST_FOCUS_CATEGORIES = (
-    Path.home() / "Library" / "Group Containers"
-    / "SY64MV22J9.com.raycast.macos.shared" / "Library" / "Application Support"
-    / "Raycast Focus" / "categories.json"
-)
-
 # Hotkey definitions (macOS virtual key codes)
 KEY_N = 45    # N key - New task
 KEY_P = 35    # P key - Toggle start/pause

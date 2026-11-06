@@ -33,7 +33,6 @@ Pass `--apply` to write.
 | `rename_task.py` | Rename an open task, usually a category. Subtasks and history point at it by id, so they follow the rename. |
 | `move_subtree.py` | Re-file a task and everything under it beneath a different parent, or `--to-top`. |
 | `also_under.py` | Make a task, open or completed, also count under another category (`--add`/`--remove`). The dashboard credits it to both, in full and split, and stripes its blocks. |
-| `import_raycast_blocklist.py` | Copy your Raycast Focus block list into `~/.etime/blocked_apps.json`, which is what turns on the distraction band on the timeline (see the README). Only your own categories, not Raycast's built-in ones. Run by hand; nothing else in etime reads Raycast. |
 | `restore_completed_parent.py` | Undo an accidentally-completed parent task, rebuilding it from a snapshot in the `~/.etime` backup repo. Needed because completing a task promotes its children up a level, which erases exactly the links you'd need to reverse it. |
 
 Times are parsed by `time_range.py` in the repo root, the same module behind the

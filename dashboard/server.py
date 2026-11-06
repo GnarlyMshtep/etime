@@ -12,7 +12,6 @@ from typing import Optional, Union
 
 from flask import Flask, Response, jsonify, render_template, request
 
-from app_usage import blocked_usage_by_day
 from .review import build_review, review_to_dict, union_seconds
 
 # Resolve paths without importing config (avoids PyQt6 dependency chain)
@@ -454,8 +453,6 @@ def api_range():
         deterred_times_by_day={
             k: [t[:5] for t in v["timestamps"]] for k, v in deterred_days.items()
         },
-        usage_by_day={k: u.as_dict() for k, u in
-                      blocked_usage_by_day(dates=dates).items()},
     )
     # Interval-clipped hours: time is credited to the day it was actually worked,
     # not to the day the task happened to be completed on.

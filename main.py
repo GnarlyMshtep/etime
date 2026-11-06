@@ -75,7 +75,6 @@ from task_tree import apply_move, plan_move, subtree_ids
 from config import MIN_TASK_MINUTES, MAX_TASK_MINUTES
 from config import KEY_N, KEY_P, KEY_C, KEY_Q, KEY_S, KEY_U, KEY_H, KEY_T, KEY_F, KEY_UP, KEY_DOWN, KEY_A, KEY_LEFT, KEY_RIGHT, KEY_G, KEY_SLASH, KEY_E, KEY_W, KEY_EQUAL, KEY_MINUS, DEFAULT_TASK_MINUTES, DETERRED_FILE, CATEGORY_ESTIMATE_SECONDS
 from sounds import play_alarm_loop, stop_alarm, play_success_sound, play_ambitious_success_sound
-import app_sampler
 import dashboard
 
 
@@ -275,10 +274,6 @@ class AppController(QObject):
 
         # Launch dashboard server
         dashboard.launch()
-
-        # Foreground-app sampling, for the distraction band on the timeline.
-        # Off unless ~/.etime/blocked_apps.json exists; see app_sampler.py.
-        app_sampler.launch_if_enabled()
 
         print("Application initialized successfully")
 

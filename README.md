@@ -131,8 +131,6 @@ All data stored in `~/.etime/`:
 - `active.json` - Current active tasks (auto-saved)
 - `history.jsonl` - Completed tasks (append-only log)
 - `alarm.aiff` - Custom alarm sound (optional, falls back to system "Ping")
-- `blocked_apps.json` - Apps/sites you call distracting. Optional; its presence turns on app sampling
-- `app_usage.jsonl` - Foreground-app runs (append-only), only while sampling is on
 
 ### Understanding Alarms
 
@@ -339,69 +337,6 @@ Opens a dashboard on port 5174 filtered to that date.
 
 The dashboard integrates distraction data from `~/Dev/DistractionCount/distraction_count.txt` (one timestamp per line in `YYYY-MM-DD HH:MM:SS` format).
 
-### App Usage & Distraction Band (optional)
-
-**Off unless you turn it on.** etime can record which app was in the foreground
-and draw the time you spent on apps *you* call distracting as a red strip along
-the bottom of each day on the timeline. Nothing is sampled, written or shown
-until the opt-in file exists.
-
-**Turning it on.** Write the list of apps and sites you consider distracting to
-`~/.etime/blocked_apps.json`:
-
-```json
-{
-  "apps": { "com.tinyspeck.slackmacgap": "Slack", "com.apple.mail": "Mail" },
-  "websites": ["youtube.com"]
-}
-```
-
-Bundle ids come from `osascript -e 'id of app "Slack"'`. That file's existence is
-the switch: etime starts the sampler alongside the dashboard, and the band
-appears. Delete it and everything stops. `python app_sampler.py --status` says
-where things stand; `--stop` stops a running sampler.
-
-**What it records.** Every few seconds: the frontmost application's bundle id and
-name, and how long since your last keystroke or click. Consecutive seconds in
-one app become one run appended to `~/.etime/app_usage.jsonl`, append-only like
-the task log. Time while you're away isn't recorded -- a locked screen or two
-minutes without input ends the run, which also covers sleep.
-
-**What it does not record.** No document names, window titles, tab titles or
-URLs. Only documented macOS APIs (`NSWorkspace`, the HID event source, the
-window-server session dictionary); it never reads another application's files or
-windows. Needs no dependency etime doesn't already have. The consequence is that
-a distracting *website* can't be seen -- only the browser it was in -- which is
-why the `websites` list above is recorded for later and not yet drawn.
-
-On the timeline, a faded strip means the app was in front but untouched: a window
-left open, not time spent. Hover a strip for the app and duration; a day's label
-gains, say, `· 24m off · 7×`. The count is separate sittings, and includes the
-six-second checks that are too short to draw -- how often you went looking is a
-different number from how long you stayed, and usually the more interesting one.
-
-### Raycast Focus (optional, one-time import)
-
-If you already keep a block list in [Raycast Focus](https://manual.raycast.com/focus),
-`scripts/import_raycast_blocklist.py` copies it into `blocked_apps.json` so you
-don't maintain the same list twice. It reads only the categories you created
-yourself -- Raycast's built-in ones (travel, streaming, ...) say nothing about
-what distracts *you*.
-
-Run by hand, never by etime. The categories file sits in a macOS Group
-Container, so the first read may raise a permission prompt; after the import
-nothing in etime touches Raycast again, and the band works the same with Raycast
-uninstalled.
-
-Raycast **focus sessions themselves cannot be read**, which is worth writing down
-so it isn't re-investigated: session starts, pauses, breaks, snoozes and
-overrides live in `raycast-activities-enc.sqlite`, which is encrypted, and no
-documented API or export reports session state. Raycast's App Intents and
-deeplinks (`raycast://focus/start`, `toggle`, `complete`) only *control* sessions.
-So "was focus on at 3pm" isn't available from structured data, and this feature
-doesn't claim it: the band measures what you actually had in front of you, which
-is the thing worth plotting anyway.
-
 ## Building Standalone App
 
 To create a standalone macOS application:
@@ -438,9 +373,6 @@ sounds.py         # Alarm playback (NSSound)
 overlay.py        # Main overlay window
 task_dialog.py    # New task popup (with subtask parent field); also the ⌃⌥⌘E edit dialog
 task_tree.py      # Moving a task + its subtree under a new parent (edit dialog, scripts)
-app_sampler.py    # Optional foreground-app sampler (opt-in; see Distraction Band)
-app_usage.py      # Reads app_usage.jsonl into the spans the timeline draws
-app_usage_types.py # AppRun, BlockList
 hotkeys.py        # Quartz event tap for global hotkeys
 dashboard/        # Flask web dashboard
   __init__.py     # Launcher (auto-start, PID management)
