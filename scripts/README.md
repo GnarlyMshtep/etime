@@ -27,10 +27,13 @@ Pass `--apply` to write.
 
 | | |
 |---|---|
-| `log_past_block.py` | Add a task for a stretch of past work, under an existing parent. `--state paused` (default) leaves it for you to finish; `--state completed` files it straight to history. |
-| `set_task_time.py` | Give a task that's *already open* the time it actually took, and optionally `--close` it. Refuses to close a task with subtasks. |
+| `log_past_block.py` | Add a task for a stretch of past work, under an existing parent. Repeat `--when` for one task spread over several stretches. `--state paused` (default) leaves it for you to finish; `--state completed` files it straight to history. `--also-under` (repeatable) makes it count under further categories too. |
+| `set_task_time.py` | Give a task that's *already open* the time it actually took, and optionally `--close` it. `--when` replaces the recorded time; `--resume-after MIN` instead *appends* one interval, from MIN minutes past the last recorded end up to now, for work that carried on after you forgot to hit resume. Refuses to close a task with subtasks. |
 | `add_category.py` | Create a category tag — a root estimated at one minute — placed in the category cluster at the top of the list. |
+| `rename_task.py` | Rename an open task, usually a category. Subtasks and history point at it by id, so they follow the rename. |
 | `move_subtree.py` | Re-file a task and everything under it beneath a different parent, or `--to-top`. |
+| `also_under.py` | Make a task, open or completed, also count under another category (`--add`/`--remove`). The dashboard credits it to both, in full and split, and stripes its blocks. |
+| `import_raycast_blocklist.py` | Copy your Raycast Focus block list into `~/.etime/blocked_apps.json`, which is what turns on the distraction band on the timeline (see the README). Only your own categories, not Raycast's built-in ones. Run by hand; nothing else in etime reads Raycast. |
 | `restore_completed_parent.py` | Undo an accidentally-completed parent task, rebuilding it from a snapshot in the `~/.etime` backup repo. Needed because completing a task promotes its children up a level, which erases exactly the links you'd need to reverse it. |
 
 Times are parsed by `time_range.py` in the repo root, the same module behind the
@@ -52,6 +55,9 @@ python3 scripts/log_past_block.py --name "1:1 with wen" --under meetings --when 
 
 # a task you'd started but never timed, now finished
 python3 scripts/set_task_time.py --task "general trends" --when "yesterday 9 to 10pm" --close
+
+# a task you paused by mistake and kept working on, 3 minutes later, now finished
+python3 scripts/set_task_time.py --task "general trends" --resume-after 3 --close
 
 # new category, then file something under it
 python3 scripts/add_category.py --name health --apply

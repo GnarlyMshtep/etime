@@ -48,18 +48,21 @@ def launch(port: int = DASHBOARD_PORT, date_filter: str | None = None) -> None:
         print(f"Dashboard already running (PID {existing_pid}) on port {port}")
         return
 
-    server_path = Path(__file__).parent / "server.py"
+    repo_root = Path(__file__).parent.parent
 
     # Use venv Python if available (has Flask installed)
-    venv_python = Path(__file__).parent.parent / ".venv" / "bin" / "python"
+    venv_python = repo_root / ".venv" / "bin" / "python"
     python_exe = str(venv_python) if venv_python.exists() else sys.executable
 
-    cmd = [python_exe, str(server_path), "--port", str(port)]
+    # Run as a module, not as dashboard/server.py: the server imports its
+    # siblings relatively (`from .review import ...`), which fails as a script.
+    cmd = [python_exe, "-m", "dashboard.server", "--port", str(port)]
     if date_filter:
         cmd.extend(["--date", date_filter])
 
     proc = subprocess.Popen(
         cmd,
+        cwd=str(repo_root),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         start_new_session=True,

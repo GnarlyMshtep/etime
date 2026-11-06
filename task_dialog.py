@@ -1,10 +1,11 @@
-"""New task dialog for etime application."""
+"""New task dialog for etime application -- and, in edit mode, the edit dialog (⌃⌥⌘E)."""
 
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel,
     QLineEdit, QSpinBox, QWidget
 )
 from PyQt6.QtCore import Qt, pyqtSignal
+from typing import Optional
 from datetime import datetime
 from PyQt6.QtGui import QFont, QKeyEvent
 
@@ -17,24 +18,38 @@ from config import (
 
 
 class TaskDialog(QDialog):
-    """Dialog for creating a new task."""
+    """Dialog for creating a new task, or (``edit_mode``) editing an existing one.
+
+    Edit mode is the same form minus the When field: a task's time on the clock
+    is never edited here, only what it's called, what it's estimated at, and
+    where it's filed.
+    """
 
     # Signal emitted when task is submitted
-    # (name, minutes, ambitious_minutes, parent_task_id, start_iso, end_iso)
+    # (name, minutes, ambitious_minutes, parent_task_id, start_iso, end_iso, also_under)
     # ambitious_minutes = 0 means None (no ambitious target)
     # parent_task_id = "" means no parent (top-level task)
     # start_iso/end_iso = "" means a live task that starts now; otherwise the task
     # is created already paused with that stretch of work already on the clock.
-    task_submitted = pyqtSignal(str, int, int, str, str, str)
+    # also_under = ids of further tasks it also counts under (see Task.also_under).
+    task_submitted = pyqtSignal(str, int, int, str, str, str, list)
 
-    def __init__(self, parent=None):
+    # Edit mode only: (name, minutes, ambitious_minutes, parent_task_id, also_under),
+    # with the same 0 / "" conventions as task_submitted.
+    task_edited = pyqtSignal(str, int, int, str, list)
+
+    def __init__(self, parent=None, edit_mode: bool = False):
         super().__init__(parent)
+        self._edit_mode = edit_mode
+        # Edit mode: names of the task being edited and its descendants, which
+        # can't become its parent (that would be a cycle).
+        self._excluded_parent_names: set[str] = set()
         self._setup_window()
         self._setup_ui()
 
     def _setup_window(self):
         """Configure dialog properties."""
-        self.setWindowTitle("New Task")
+        self.setWindowTitle("Edit Task" if self._edit_mode else "New Task")
         self.setWindowFlags(
             Qt.WindowType.WindowStaysOnTopHint |
             Qt.WindowType.FramelessWindowHint |
@@ -73,7 +88,7 @@ class TaskDialog(QDialog):
         layout.setSpacing(15)
 
         # Title
-        title = QLabel("New Task")
+        title = QLabel("Edit Task" if self._edit_mode else "New Task")
         title_font = QFont(FONT_FAMILY_SERIF)
         title_font.setPointSize(17)
         title_font.setBold(True)
@@ -101,7 +116,10 @@ class TaskDialog(QDialog):
         self.when_input.textChanged.connect(self._on_when_changed)
         when_layout.addWidget(when_label)
         when_layout.addWidget(self.when_input)
-        layout.addLayout(when_layout)
+        when_container = QWidget()
+        when_container.setLayout(when_layout)
+        when_container.setVisible(not self._edit_mode)
+        layout.addWidget(when_container)
 
         # Echoes back how the When text was actually read, because "2:30-4" involves
         # guessing which 2:30 you meant. Seeing it beats trusting it.
@@ -154,6 +172,17 @@ class TaskDialog(QDialog):
         self._available_parents: list[tuple[str, str]] = []
         layout.addWidget(self.parent_container)
 
+        # Further categories it counts under, besides its parent: "metagrad" on a
+        # meeting filed under meetings. Comma-separated names of active tasks.
+        also_layout = QHBoxLayout()
+        also_label = QLabel("Also under:")
+        also_label.setFixedWidth(80)
+        self.also_input = QLineEdit()
+        self.also_input.setPlaceholderText("optional  —  exact names, e.g. meetings, CASI")
+        also_layout.addWidget(also_label)
+        also_layout.addWidget(self.also_input)
+        layout.addLayout(also_layout)
+
         # Error label (hidden by default)
         self.error_label = QLabel("")
         self.error_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -162,7 +191,9 @@ class TaskDialog(QDialog):
         layout.addWidget(self.error_label)
 
         # Instruction label
-        instruction = QLabel("Enter to start  |  When = backdate it, paused")
+        instruction = QLabel("Enter to save  |  Esc to cancel  |  blank parent = top level"
+                             if self._edit_mode else
+                             "Enter to start  |  When = backdate it, paused")
         instruction.setAlignment(Qt.AlignmentFlag.AlignCenter)
         instruction.setStyleSheet("color: #666666; font-size: 11px;")
         layout.addWidget(instruction)
@@ -279,21 +310,33 @@ class TaskDialog(QDialog):
         elif parent_text == self._parent_name and self._parent_task_id:
             parent_id = self._parent_task_id
         else:
-            matches = [
-                tid for (nm, tid) in self._available_parents
-                if nm.strip().lower() == parent_text.lower()
-            ]
-            if len(matches) == 0:
-                self.error_label.setText(f"No active task named '{parent_text}'")
-                self.error_label.setVisible(True)
-                print(f"ERROR: No parent task named '{parent_text}'")
+            parent_id = self._resolve_task_name(parent_text)
+            if parent_id is None:
                 return
-            if len(matches) > 1:
-                self.error_label.setText(f"'{parent_text}' matches multiple tasks")
-                self.error_label.setVisible(True)
-                print(f"ERROR: Ambiguous parent name '{parent_text}'")
+
+        also_under: list[str] = []
+        for also_text in (a.strip() for a in self.also_input.text().split(",")):
+            if not also_text:
+                continue
+            also_id = self._resolve_task_name(also_text)
+            if also_id is None:
                 return
-            parent_id = matches[0]
+            if also_id == parent_id:
+                self._show_error(f"It's already filed under '{also_text}'")
+                return
+            if also_id not in also_under:
+                also_under.append(also_id)
+
+        if self._edit_mode:
+            print(f"TaskDialog (edit) submitting: name='{name}', minutes={minutes}, "
+                  f"ambitious={ambitious_minutes}, parent={parent_id or 'none'}, "
+                  f"also_under={also_under}")
+            # Close first, then emit: if the edit can't be applied, the handler
+            # reopens this form with the reason, and that must not be undone here.
+            self.accept()
+            self.task_edited.emit(name, minutes, ambitious_minutes, parent_id, also_under)
+            return
+
         # Re-parse rather than trusting the cached value: the preview could be
         # stale if the text changed without the signal landing.
         try:
@@ -307,16 +350,42 @@ class TaskDialog(QDialog):
 
         when_str = f", when={block.describe()}" if block else ""
         print(f"TaskDialog submitting: name='{name}', minutes={minutes}, "
-              f"ambitious={ambitious_minutes}, parent={parent_id or 'none'}{when_str}")
+              f"ambitious={ambitious_minutes}, parent={parent_id or 'none'}{when_str}, "
+              f"also_under={also_under}")
 
         # Emit signal (ambitious_minutes=0 means None, parent_id="" means top-level,
         # empty start/end means start it now)
         self.task_submitted.emit(name, minutes, ambitious_minutes, parent_id,
-                                 start_iso, end_iso)
+                                 start_iso, end_iso, also_under)
 
         # Close dialog
         self.accept()
         print("TaskDialog closed")
+
+    def _show_error(self, text: str) -> None:
+        self.error_label.setText(text)
+        self.error_label.setVisible(True)
+        print(f"ERROR: {text}")
+
+    def _resolve_task_name(self, text: str) -> Optional[str]:
+        """Id of the one active task named ``text``, or None after showing why not.
+
+        Shared by the Parent and Also-under fields, which name tasks the same way.
+        """
+        matches = [
+            tid for (nm, tid) in self._available_parents
+            if nm.strip().lower() == text.lower()
+        ]
+        if not matches and text.lower() in self._excluded_parent_names:
+            self._show_error("Can't file a task under itself or its own subtask")
+            return None
+        if len(matches) == 0:
+            self._show_error(f"No active task named '{text}'")
+            return None
+        if len(matches) > 1:
+            self._show_error(f"'{text}' matches multiple tasks")
+            return None
+        return matches[0]
 
     def set_parent_context(self, parent_name: str, parent_task_id: str) -> None:
         """Set the parent task context for the subtask field."""
@@ -326,20 +395,29 @@ class TaskDialog(QDialog):
             self.parent_input.setText(parent_name)
             self.parent_container.setVisible(True)
         else:
-            self.parent_container.setVisible(False)
+            # Edit mode always shows the field: it's how a top-level task gets filed.
+            self.parent_container.setVisible(self._edit_mode)
             self._parent_task_id = ""
             self._parent_name = ""
 
-    def set_available_parents(self, parents: list[tuple[str, str]]) -> None:
-        """Provide (name, id) of active tasks so a typed parent name resolves."""
-        self._available_parents = parents
+    def set_available_parents(self, parents: list[tuple[str, str]],
+                              excluded_names: frozenset[str] = frozenset()) -> None:
+        """Provide (name, id) of active tasks so a typed parent name resolves.
 
-    def prefill(self, name: str, minutes: int, ambitious_minutes: int, when: str = "") -> None:
+        ``excluded_names`` (edit mode) are tasks that may not become the parent,
+        named so the error can say why rather than "no task named ...".
+        """
+        self._available_parents = parents
+        self._excluded_parent_names = {n.strip().lower() for n in excluded_names}
+
+    def prefill(self, name: str, minutes: int, ambitious_minutes: int, when: str = "",
+                also: str = "") -> None:
         """Pre-fill the fields (e.g. to restore text after undoing a creation)."""
         self.name_input.setText(name)
         self.time_input.setValue(minutes)
         self.ambitious_input.setText(str(ambitious_minutes) if ambitious_minutes > 0 else "")
         self.when_input.setText(when)
+        self.also_input.setText(also)
 
     def reset(self):
         """Reset dialog to default state."""
@@ -352,7 +430,9 @@ class TaskDialog(QDialog):
         self._estimate_touched = False
         self.error_label.setVisible(False)
         self.parent_input.clear()
+        self.also_input.clear()
         self.parent_container.setVisible(False)
         self._parent_task_id = ""
         self._parent_name = ""
         self._available_parents = []
+        self._excluded_parent_names = set()

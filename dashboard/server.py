@@ -8,10 +8,11 @@ import shutil
 import tempfile
 from datetime import datetime, date, timedelta
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, Response, jsonify, render_template, request
 
+from app_usage import blocked_usage_by_day
 from .review import build_review, review_to_dict, union_seconds
 
 # Resolve paths without importing config (avoids PyQt6 dependency chain)
@@ -19,6 +20,7 @@ ETIME_DIR = Path.home() / ".etime"
 HISTORY_FILE = ETIME_DIR / "history.jsonl"
 ACTIVE_FILE = ETIME_DIR / "active.json"
 SUMMARY_FILE = ETIME_DIR / "weekly_summaries.json"
+PLAN_FILE = ETIME_DIR / "weekly_plans.json"
 DISTRACTION_FILE = Path.home() / "Dev" / "DistractionCount" / "distraction_count.txt"
 DETERRED_FILE = Path.home() / "Dev" / "DistractionCount" / "deterred_count.txt"
 BACKUP_DIR = Path.home() / "Dev" / "etime" / "claude_data"
@@ -149,9 +151,12 @@ def _compute_stats(tasks: list[dict], distractions: dict, deterred: dict | None 
     total_elapsed = sum(t.get("elapsed_seconds", 0) for t in tasks)
     total_estimated = sum(t.get("estimated_seconds", 0) for t in tasks)
 
-    # Calibration: how accurate are estimates?
+    # Calibration: how accurate are estimates? Backfilled tasks are skipped --
+    # they were logged after the fact with the estimate set to their length.
     accuracies = []
     for t in tasks:
+        if t.get("backfilled", False):
+            continue
         est = t.get("estimated_seconds", 0)
         elap = t.get("elapsed_seconds", 0)
         if est > 0:
@@ -436,6 +441,7 @@ def api_range():
         all_tasks.extend(day_tasks)
 
     distraction_days = {d.isoformat(): _load_distractions(d) for d in dates}
+    deterred_days = {d.isoformat(): _load_deterred(d) for d in dates}
     distractions_by_day = {k: v["count"] for k, v in distraction_days.items()}
     review = build_review(
         history=history,
@@ -445,6 +451,11 @@ def api_range():
         distraction_times_by_day={
             k: [t[:5] for t in v["timestamps"]] for k, v in distraction_days.items()
         },
+        deterred_times_by_day={
+            k: [t[:5] for t in v["timestamps"]] for k, v in deterred_days.items()
+        },
+        usage_by_day={k: u.as_dict() for k, u in
+                      blocked_usage_by_day(dates=dates).items()},
     )
     # Interval-clipped hours: time is credited to the day it was actually worked,
     # not to the day the task happened to be completed on.
@@ -453,7 +464,7 @@ def api_range():
         row["tracked_hours"] = round(tracked_by_day.get(row["date"], 0.0) / 3600, 2)
 
     distractions_total = sum(distractions_by_day.values())
-    deterred_total = sum(_load_deterred(d)["count"] for d in dates)
+    deterred_total = sum(v["count"] for v in deterred_days.values())
     stats = _compute_stats(all_tasks, {"count": distractions_total}, {"count": deterred_total})
     stats["total_switches"] = total_switches
     stats["active_days"] = sum(1 for day in daily if day["tasks"] > 0)
@@ -467,7 +478,7 @@ def api_range():
             "overtime": t.get("elapsed_seconds", 0) > t.get("estimated_seconds", 0),
         }
         for t in all_tasks
-        if t.get("estimated_seconds", 0) > 0
+        if t.get("estimated_seconds", 0) > 0 and not t.get("backfilled", False)
     ]
 
     return jsonify({
@@ -478,7 +489,10 @@ def api_range():
         "daily": daily,
         "calibration": calibration,
         "review": review_to_dict(review),
-        "summary": _load_summaries().get(
+        "summary": _load_summaries(path=SUMMARY_FILE).get(
+            _summary_key(period, dates[0]), {"text": "", "updated_at": ""}
+        ),
+        "plan": _load_summaries(path=PLAN_FILE).get(
             _summary_key(period, dates[0]), {"text": "", "updated_at": ""}
         ),
         # A month is reviewed by reading back the weeks inside it, so the month
@@ -489,22 +503,25 @@ def api_range():
 
 
 def _week_summaries(dates: list[date]) -> list[dict]:
-    """Written summaries for every Monday-start week the range touches.
+    """Written summaries (and plans) for every Monday-start week the range touches.
 
     Weeks with nothing written are included too — a gap in the record is worth
     seeing, and it's also the affordance for going and filling it in.
     """
-    summaries = _load_summaries()
+    summaries = _load_summaries(path=SUMMARY_FILE)
+    plans = _load_summaries(path=PLAN_FILE)
     mondays = sorted({d - timedelta(days=d.weekday()) for d in dates})
     out = []
     for monday in mondays:
-        entry = summaries.get(_summary_key("week", monday), {})
+        key = _summary_key("week", monday)
+        entry = summaries.get(key, {})
         out.append({
-            "key": _summary_key("week", monday),
+            "key": key,
             "start": monday.isoformat(),
             "end": (monday + timedelta(days=6)).isoformat(),
             "text": entry.get("text", ""),
             "updated_at": entry.get("updated_at", ""),
+            "plan": plans.get(key, {}).get("text", ""),
         })
     return out
 
@@ -514,42 +531,53 @@ def _summary_key(period: str, start: date) -> str:
     return f"{period}-{start.isoformat()}"
 
 
-def _load_summaries() -> dict:
-    """All written summaries, keyed by ``_summary_key``."""
-    if not SUMMARY_FILE.exists():
+def _load_summaries(path: Path) -> dict:
+    """All written entries in ``path`` (summaries or plans), keyed by ``_summary_key``."""
+    if not path.exists():
         return {}
     try:
-        with open(SUMMARY_FILE, "r") as f:
+        with open(path, "r") as f:
             data = json.load(f)
         return data if isinstance(data, dict) else {}
     except (json.JSONDecodeError, OSError):
         return {}
 
 
-def _save_summary(key: str, text: str) -> dict:
-    """Write one summary, preserving the rest of the file. Returns the entry."""
-    summaries = _load_summaries()
+def _save_summary(path: Path, key: str, text: str) -> dict:
+    """Write one entry to ``path``, preserving the rest of the file. Returns the entry."""
+    summaries = _load_summaries(path=path)
     entry = {"text": text, "updated_at": datetime.now().isoformat(timespec="seconds")}
     summaries[key] = entry
-    tmp = SUMMARY_FILE.with_suffix(".json.tmp")
+    tmp = path.with_suffix(".json.tmp")
     with open(tmp, "w") as f:
         json.dump(summaries, f, indent=2, ensure_ascii=False)
-    tmp.replace(SUMMARY_FILE)
+    tmp.replace(path)
     return entry
 
 
-@app.route("/api/summary", methods=["GET", "POST"])
-def api_summary():
-    """Read or write the user's own written summary for one period."""
+def _summary_endpoint(path: Path) -> Union[Response, tuple[Response, int]]:
+    """GET/POST handler body shared by the summary and plan routes."""
     if request.method == "GET":
         key = request.args.get("key", "")
-        return jsonify(_load_summaries().get(key, {"text": "", "updated_at": ""}))
+        return jsonify(_load_summaries(path=path).get(key, {"text": "", "updated_at": ""}))
 
     payload = request.get_json(silent=True) or {}
     key = str(payload.get("key", "")).strip()
     if not key:
         return jsonify({"error": "missing key"}), 400
-    return jsonify(_save_summary(key, str(payload.get("text", ""))))
+    return jsonify(_save_summary(path=path, key=key, text=str(payload.get("text", ""))))
+
+
+@app.route("/api/summary", methods=["GET", "POST"])
+def api_summary():
+    """Read or write the user's own written summary (reflection) for one period."""
+    return _summary_endpoint(path=SUMMARY_FILE)
+
+
+@app.route("/api/plan", methods=["GET", "POST"])
+def api_plan():
+    """Read or write the user's plan for one period, written ahead of it."""
+    return _summary_endpoint(path=PLAN_FILE)
 
 
 def _backup_history() -> Path:

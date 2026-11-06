@@ -69,11 +69,13 @@ from timer_engine import TimerEngine
 from overlay import OverlayWindow
 from task_dialog import TaskDialog
 from search_dialog import SearchDialog
-from rename_dialog import RenameDialog
 from time_adjust_dialog import TimeAdjustDialog
 from hotkeys import HotkeyManager
+from task_tree import apply_move, plan_move, subtree_ids
+from config import MIN_TASK_MINUTES, MAX_TASK_MINUTES
 from config import KEY_N, KEY_P, KEY_C, KEY_Q, KEY_S, KEY_U, KEY_H, KEY_T, KEY_F, KEY_UP, KEY_DOWN, KEY_A, KEY_LEFT, KEY_RIGHT, KEY_G, KEY_SLASH, KEY_E, KEY_W, KEY_EQUAL, KEY_MINUS, DEFAULT_TASK_MINUTES, DETERRED_FILE, CATEGORY_ESTIMATE_SECONDS
 from sounds import play_alarm_loop, stop_alarm, play_success_sound, play_ambitious_success_sound
+import app_sampler
 import dashboard
 
 
@@ -117,7 +119,7 @@ class HelpDialog(QDialog):
             ("⌃⌥⌘P", "Toggle start / pause"),
             ("⌃⌥⌘W", "Waiting on something external (pauses + starts a wait clock)"),
             ("⌃⌥⌘C", "Complete focused task"),
-            ("⌃⌥⌘E", "Rename focused task"),
+            ("⌃⌥⌘E", "Edit focused task (name, estimate, ambitious, parent, also under)"),
             ("⌃⌥⌘+", "Add time to focused task"),
             ("⌃⌥⌘−", "Remove time from focused task"),
             ("⌃⌥⌘U", "Undo (last 5 actions)"),
@@ -210,7 +212,7 @@ class AppController(QObject):
         self.hotkey_manager.register(KEY_A, self.toggle_show_all)
         self.hotkey_manager.register(KEY_G, self.log_deterred)
         self.hotkey_manager.register(KEY_SLASH, self.open_search)
-        self.hotkey_manager.register(KEY_E, self.edit_task_name)
+        self.hotkey_manager.register(KEY_E, self.edit_task)
         self.hotkey_manager.register(KEY_W, self.toggle_waiting)
         # ⌃⌥⌘+ adds time, ⌃⌥⌘− removes it; register both the shifted and bare
         # variants of each key so a fumbled Shift still works.
@@ -244,11 +246,13 @@ class AppController(QObject):
         self.search_dialog.task_selected.connect(self._on_search_selected)
         self.search_dialog.create_task_requested.connect(self._on_search_create)
 
-        # Setup rename dialog (kept as instance to prevent GC)
-        self.rename_dialog = RenameDialog()
-        self.rename_dialog.name_submitted.connect(self._on_rename_submitted)
-        # Id of the task currently being renamed (set when the dialog opens).
-        self._renaming_task_id: Optional[str] = None
+        # Setup edit dialog: the new-task form in edit mode (kept as instance to prevent GC)
+        self.edit_dialog = TaskDialog(edit_mode=True)
+        self.edit_dialog.task_edited.connect(self._on_task_edited)
+        # Task being edited, and the estimate/ambitious minutes its form opened
+        # with -- a field left at its prefill keeps the task's exact seconds.
+        self._editing_task_id: Optional[str] = None
+        self._edit_prefill_minutes: tuple[int, int] = (0, 0)
 
         # Setup time-adjust dialog (kept as instance to prevent GC)
         self.time_adjust_dialog = TimeAdjustDialog()
@@ -271,6 +275,10 @@ class AppController(QObject):
 
         # Launch dashboard server
         dashboard.launch()
+
+        # Foreground-app sampling, for the distraction band on the timeline.
+        # Off unless ~/.etime/blocked_apps.json exists; see app_sampler.py.
+        app_sampler.launch_if_enabled()
 
         print("Application initialized successfully")
 
@@ -377,7 +385,8 @@ class AppController(QObject):
             cur = parent
 
     def _on_task_submitted(self, name: str, minutes: int, ambitious_minutes: int,
-                           parent_task_id: str, start_iso: str = "", end_iso: str = ""):
+                           parent_task_id: str, start_iso: str = "", end_iso: str = "",
+                           also_under: Optional[list[str]] = None):
         """Handle task submission from dialog.
 
         With a start/end the task is backdated: the work already happened, so it
@@ -401,6 +410,7 @@ class AppController(QObject):
             state=TaskState.PAUSED if backdated else TaskState.ONGOING,  # else auto-start
             started_at=start_iso if backdated else datetime.now().isoformat(),
             parent_task_id=parent_task_id or None,
+            also_under=list(also_under or []),
         )
         if backdated:
             elapsed = (datetime.fromisoformat(end_iso)
@@ -800,6 +810,7 @@ class AppController(QObject):
             "name": task.name,
             "minutes": max(1, task.estimated_seconds // 60),
             "ambitious_minutes": (task.ambitious_seconds // 60) if task.ambitious_seconds else 0,
+            "also": self._also_under_text(task),
         }
 
         # End any open interval
@@ -1105,39 +1116,124 @@ class AppController(QObject):
         }
         self.new_task(suppress_parent=True)
 
-    def edit_task_name(self):
-        """Rename the focused task in place (⌃⌥⌘E).
+    def edit_task(self):
+        """Edit the focused task in place (⌃⌥⌘E): name, estimate, ambitious, parent, also-under.
 
-        Edits whichever task is focused (which is normally the running one). If
-        the rename dialog is already open, do nothing so re-pressing the hotkey
-        (which the local monitor also delivers) doesn't reset the field.
+        Its time on the clock is not editable here (that's ⌃⌥⌘+ / ⌃⌥⌘−). Edits
+        whichever task is focused. If the dialog is already open, do nothing so
+        re-pressing the hotkey (which the local monitor also delivers) doesn't
+        reset the form.
         """
-        if self.rename_dialog.isVisible():
+        if self.edit_dialog.isVisible():
             return
         task = self.overlay.get_focused_task()
         if not task:
-            print("No task focused to rename")
+            print("No task focused to edit")
             return
         self.previous_app = NSWorkspace.sharedWorkspace().frontmostApplication()
-        self._renaming_task_id = task.id
-        print(f"Renaming task: {task.name}")
-        self.rename_dialog.open_for(task.name)
+        self._editing_task_id = task.id
 
-    def _on_rename_submitted(self, new_name: str):
-        """Apply a submitted rename to the task that was being edited."""
-        task_id = self._renaming_task_id
-        self._renaming_task_id = None
+        by_id = {t.id: t for t in self.tasks}
+        own_subtree = subtree_ids(self.tasks, root=task)
+        parent = by_id.get(task.parent_task_id) if task.parent_task_id else None
+        minutes = max(MIN_TASK_MINUTES, min(MAX_TASK_MINUTES, round(task.estimated_seconds / 60)))
+        ambitious = round(task.ambitious_seconds / 60) if task.ambitious_seconds else 0
+        self._edit_prefill_minutes = (minutes, ambitious)
+
+        self.edit_dialog.reset()
+        self.edit_dialog.set_available_parents(
+            [(t.name, t.id) for t in self.tasks if t.id not in own_subtree],
+            excluded_names=frozenset(t.name for t in self.tasks if t.id in own_subtree),
+        )
+        self.edit_dialog.set_parent_context(
+            parent_name=parent.name if parent else "",
+            parent_task_id=parent.id if parent else "",
+        )
+        self.edit_dialog.prefill(name=task.name, minutes=minutes, ambitious_minutes=ambitious,
+                                 also=self._also_under_text(task))
+        print(f"Editing task: {task.name}")
+        self.edit_dialog.show()
+        self.edit_dialog.raise_()
+        self.edit_dialog.activateWindow()
+        self.edit_dialog.name_input.setFocus()
+
+    def _also_under_text(self, task: Task) -> str:
+        """``task.also_under`` as the comma-separated names the dialog shows.
+
+        An id that no longer names an active task (its category was completed)
+        is kept as the raw id, so saving the form unchanged fails loudly rather
+        than quietly dropping it.
+        """
+        names = {t.id: t.name for t in self.tasks}
+        return ", ".join(names.get(tid, tid) for tid in task.also_under)
+
+    def _on_task_edited(self, name: str, minutes: int, ambitious_minutes: int,
+                        parent_task_id: str, also_under: Optional[list[str]] = None):
+        """Apply a submitted edit to the task that was being edited."""
+        task_id = self._editing_task_id
+        self._editing_task_id = None
         task = next((t for t in self.tasks if t.id == task_id), None)
         if task is None:
-            print(f"Rename target {task_id} no longer exists")
+            print(f"Edit target {task_id} no longer exists")
             return
-        old = task.name
-        task.name = new_name
-        print(f"Renamed '{old}' -> '{new_name}'")
+
+        # Plan the re-file first, so a move that can't happen leaves the task
+        # wholly untouched and the form comes back with the reason on it.
+        new_parent_id = parent_task_id or None
+        move = None
+        if new_parent_id != task.parent_task_id:
+            new_parent = next((t for t in self.tasks if t.id == new_parent_id), None)
+            try:
+                move = plan_move(self.tasks, task=task, new_parent=new_parent)
+            except ValueError as exc:
+                print(f"ERROR: not re-filing '{task.name}': {exc}")
+                self._editing_task_id = task_id
+                self.edit_dialog.error_label.setText(f"Can't move it: {exc}")
+                self.edit_dialog.error_label.setVisible(True)
+                self.edit_dialog.show()
+                self.edit_dialog.raise_()
+                self.edit_dialog.activateWindow()
+                return
+
+        if name != task.name:
+            print(f"Renamed '{task.name}' -> '{name}'")
+            task.name = name
+
+        prefill_minutes, prefill_ambitious = self._edit_prefill_minutes
+        if minutes != prefill_minutes:
+            task.estimated_seconds = minutes * 60
+            print(f"Estimate of '{task.name}' -> {minutes} min")
+            # Same rule as the time-adjust path: sit at the level already reached,
+            # so a lowered estimate doesn't alarm on the spot and a raised one re-arms.
+            ratio = task.elapsed_seconds / task.estimated_seconds
+            task.last_alarm_level = int(ratio) if ratio >= 1.0 else 0
+        if ambitious_minutes != prefill_ambitious:
+            task.ambitious_seconds = ambitious_minutes * 60 if ambitious_minutes > 0 else None
+            print(f"Ambitious of '{task.name}' -> {ambitious_minutes or 'none'} min")
+        also_under = list(also_under or [])
+        if also_under != task.also_under:
+            task.also_under = also_under
+            print(f"'{task.name}' also under {also_under or 'nothing'}")
+
+        reordered = move is not None
+        if move is not None:
+            # In place: the overlay holds this same list.
+            self.tasks[:] = apply_move(self.tasks, move=move)
+            self._unfold_ancestors(task)
+            target = move.new_parent.name if move.new_parent else "top level"
+            print(f"Moved '{task.name}' under {target}")
+
         save_active_tasks(self.tasks)
+        if reordered:
+            # Keep focus on the edited task: focused_index is a position in the
+            # visible list, and the move just shifted what sits where.
+            visible = self.overlay._visible_tasks()
+            self.overlay.focused_index = next(
+                (i for i, t in enumerate(visible) if t.id == task.id), self.overlay.focused_index)
+            self.overlay.rebuild_widgets()
         self.overlay.update_display()
 
-        # Restore focus to the app the user was in before renaming.
+        # Restore focus to the app the user was in before editing.
         if self.previous_app:
             self.previous_app.activateWithOptions_(1)
             self.previous_app = None

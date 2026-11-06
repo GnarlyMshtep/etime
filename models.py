@@ -40,6 +40,14 @@ class Task:
     # reasons about state — the dashboard, the review, the alarms — should go on
     # treating it as plain paused.
     waiting_since: Optional[str] = None
+    # True when the task was written into the log after the fact by a script
+    # (scripts/log_past_block.py), rather than entered through the app.
+    backfilled: bool = False
+    # Ids of further tasks this one also counts under, besides its tree parent --
+    # a metagrad meeting is filed under "meetings" but is metagrad work too. Only
+    # the dashboard reads it (each id is resolved to its root tag there); the
+    # overlay tree, moves, and folding go by parent_task_id alone.
+    also_under: List[str] = field(default_factory=list)
 
     def __post_init__(self):
         """Auto-generate ID and timestamp if not provided."""
@@ -194,4 +202,8 @@ class Task:
             d['is_collapsed'] = False
         if 'waiting_since' not in d:
             d['waiting_since'] = None
+        if 'backfilled' not in d:
+            d['backfilled'] = False
+        if 'also_under' not in d:
+            d['also_under'] = []
         return cls(**d)

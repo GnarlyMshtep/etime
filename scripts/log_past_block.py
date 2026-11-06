@@ -9,7 +9,10 @@ you complete or resume it yourself. ``--state completed`` instead appends
 straight to history for something already done and done with.
 
 Times go through the same parser as the dialog, so "yesterday 4 to 5:30" reads
-the same way in both places.
+the same way in both places. ``--when`` can be repeated for one task that ran
+over several separate stretches -- a three-day conference is one task, not three.
+``--also-under`` (repeatable) makes it count under further categories too: a
+metagrad meeting filed under meetings, ``--also-under metagrad``.
 """
 
 from __future__ import annotations
@@ -91,20 +94,23 @@ def clashes_with(block: TimeRange, *, tasks: list[Task]) -> list[Clash]:
     return out
 
 
-def build_task(*, name: str, block: TimeRange, parent: Task, completed: bool,
-               minutes: Optional[int]) -> Task:
-    estimated = (minutes or block.minutes) * 60
+def build_task(*, name: str, blocks: list[TimeRange], parent: Task, completed: bool,
+               minutes: Optional[int], also_under: Optional[list[Task]] = None) -> Task:
+    """``blocks`` must be sorted and non-overlapping."""
+    estimated = (minutes or sum(b.minutes for b in blocks)) * 60
     task = Task(
         id="",
         name=name,
         estimated_seconds=estimated,
         state=TaskState.COMPLETED if completed else TaskState.PAUSED,
-        elapsed_seconds=block.seconds,
-        created_at=block.start.isoformat(),
-        started_at=block.start.isoformat(),
-        completed_at=block.end.isoformat() if completed else None,
-        work_intervals=[{"start": block.start.isoformat(), "end": block.end.isoformat()}],
+        elapsed_seconds=sum(b.seconds for b in blocks),
+        created_at=blocks[0].start.isoformat(),
+        started_at=blocks[0].start.isoformat(),
+        completed_at=blocks[-1].end.isoformat() if completed else None,
+        work_intervals=[{"start": b.start.isoformat(), "end": b.end.isoformat()} for b in blocks],
         parent_task_id=parent.id,
+        backfilled=True,
+        also_under=[t.id for t in also_under or []],
     )
     # Without this, resuming a block that already exceeds its estimate fires the
     # overtime alarm immediately, for time spent before the task existed.
@@ -114,7 +120,7 @@ def build_task(*, name: str, block: TimeRange, parent: Task, completed: bool,
 
 def backup(path: Path) -> Path:
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     dest = BACKUP_DIR / f"{path.name}.{stamp}.bak"
     shutil.copy2(path, dest)
     return dest
@@ -125,35 +131,52 @@ def main() -> None:
     ap.add_argument("--name", required=True, help="name for the new task")
     ap.add_argument("--under", "--category", dest="under", required=True,
                     help="existing task to file it under")
-    ap.add_argument("--when", required=True,
-                    help='e.g. "yesterday 4 to 5:30", "2:30-4", "9/26 9-10:30"')
+    ap.add_argument("--when", required=True, action="append",
+                    help='e.g. "yesterday 4 to 5:30", "2:30-4", "9/26 9-10:30". '
+                         'Repeat for a task that ran over several stretches.')
+    ap.add_argument("--also-under", action="append", default=[],
+                    help="a further category it counts under; repeatable")
     ap.add_argument("--state", choices=("paused", "completed"), default="paused")
     ap.add_argument("--minutes", type=int, default=None,
                     help="estimate in minutes (default: the length of the block)")
     ap.add_argument("--apply", action="store_true")
     args = ap.parse_args()
 
-    try:
-        block = parse_time_range(args.when)
-    except ValueError as exc:
-        sys.exit(str(exc))
-    if block is None:
-        sys.exit("--when can't be empty")
+    blocks: list[TimeRange] = []
+    for when in args.when:
+        try:
+            block = parse_time_range(when)
+        except ValueError as exc:
+            sys.exit(f"{when!r}: {exc}")
+        if block is None:
+            sys.exit("--when can't be empty")
+        blocks.append(block)
+    blocks.sort(key=lambda b: b.start)
+    for a, b in zip(blocks, blocks[1:]):
+        if b.start < a.end:
+            sys.exit(f"--when blocks overlap each other: {a.start:%a %m-%d %H:%M}-{a.end:%H:%M} "
+                     f"and {b.start:%a %m-%d %H:%M}-{b.end:%H:%M}")
 
     tasks = load_active_tasks()
     parent = find_parent(tasks, name=args.under)
+    also = [find_parent(tasks, name=n) for n in args.also_under]
+    if parent.id in {t.id for t in also}:
+        sys.exit(f"--also-under {parent.name!r} is already its parent")
     completed = args.state == "completed"
-    task = build_task(name=args.name, block=block, parent=parent,
-                      completed=completed, minutes=args.minutes)
+    task = build_task(name=args.name, blocks=blocks, parent=parent,
+                      completed=completed, minutes=args.minutes, also_under=also)
 
-    print(f"{task.name!r} under {parent.name!r}, as {task.state.value}")
-    print(f"  {block.start:%a %Y-%m-%d %H:%M} - {block.end:%H:%M}  ({block.minutes} min)")
+    also_str = f", also under {', '.join(repr(t.name) for t in also)}" if also else ""
+    print(f"{task.name!r} under {parent.name!r}{also_str}, as {task.state.value}")
+    any_clash = False
+    for block in blocks:
+        print(f"  {block.start:%a %Y-%m-%d %H:%M} - {block.end:%H:%M}  ({block.minutes} min)")
+        for c in clashes_with(block, tasks=tasks):
+            any_clash = True
+            print(f"    OVERLAPS {c.start:%a %H:%M}-{c.end:%H:%M} {c.name[:48]!r}")
     print(f"  estimate {task.estimated_seconds // 60} min, "
           f"-> {'history.jsonl' if completed else 'active.json'}")
-    found = clashes_with(block, tasks=tasks)
-    for c in found:
-        print(f"  OVERLAPS {c.start:%H:%M}-{c.end:%H:%M} {c.name[:48]!r}")
-    if not found:
+    if not any_clash:
         print("  no overlap with work already tracked")
 
     if not args.apply:

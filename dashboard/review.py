@@ -8,6 +8,13 @@ whole elapsed time on its completion day.
 Intervals are *unioned*, never summed: a parent task is often running while one
 of its own subtasks runs, so summing durations double-counts wall-clock time
 (~7% over the last month of real data).
+
+A task can count under more than one tag: its own root, plus the roots of
+whatever its ``also_under`` names (inherited by its subtasks). Each tag then has
+two totals. *Full* gives every owner all of the shared time -- the honest
+answer to "how long went to metagrad". *Split* divides shared time among its
+owners, so the tags still add up to the day; percentages and the stacked daily
+chart use split. A tag with no shared work has split == full.
 """
 
 from __future__ import annotations
@@ -36,6 +43,9 @@ class TagRow:
     task_count: int
     has_children: bool
     top_tasks: list[dict] = field(default_factory=list)
+    # Shared time divided among its owners (see module docstring); == seconds
+    # when nothing in the tag is shared.
+    split_seconds: float = 0.0
 
 
 @dataclass
@@ -61,6 +71,9 @@ class TaskRow:
     days: list[str]                 # ISO dates touched inside the range
     created_at: str
     completed_at: str
+    backfilled: bool = False        # logged after the fact; its estimate is just its length
+    also_tag_ids: list[str] = field(default_factory=list)   # tags besides ``tag``
+    also_tags: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -91,6 +104,8 @@ class Block:
     resize_end_min: str = ""     # right edge can't be dragged before this
     editable: bool = False
     lock_reason: str = ""        # shown to the user when not editable
+    also_tag_ids: list[str] = field(default_factory=list)   # drawn as stripes
+    also_tags: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -99,8 +114,16 @@ class DayRow:
     seconds: float
     distractions: int
     distraction_times: list[str]    # "HH:MM", for ticks on the timeline
+    deterred_times: list[str]       # "HH:MM", distractions resisted
     by_tag: dict[str, float]
     blocks: list[Block]
+    # Foreground time on the apps you call distracting, from the optional app
+    # sampler. Empty when it isn't running -- `usage_note` says which, so an
+    # empty band is never read as a clean day.
+    blocked_seconds: float = 0.0
+    blocked_spans: list[dict] = field(default_factory=list)
+    blocked_by_app: dict[str, float] = field(default_factory=dict)
+    usage_note: str = ""
 
 
 @dataclass
@@ -108,7 +131,7 @@ class Review:
     start: str
     end: str
     tracked_seconds: float          # union across everything (wall-clock)
-    tag_seconds_total: float        # sum of per-tag unions (the % denominator)
+    tag_seconds_total: float        # sum of per-tag split totals (the % denominator)
     active_days: int
     tasks_completed: int
     longest_focus: Optional[dict]
@@ -167,6 +190,32 @@ def merge(intervals: list[Interval]) -> list[Interval]:
 
 def union_seconds(intervals: list[Interval]) -> float:
     return sum((e - s).total_seconds() for s, e in merge(intervals))
+
+
+def weighted_union_seconds(pieces: list[tuple[datetime, datetime, float]]) -> float:
+    """Like ``union_seconds``, but each moment counts at the highest weight covering it.
+
+    A tag's split total: its own work has weight 1, work it shares with n-1
+    other tags weight 1/n. Where its own work overlaps shared work it already
+    has the moment outright, so the max -- not the sum -- is what counts. With
+    every weight 1 this is exactly ``union_seconds``.
+    """
+    events: list[tuple[datetime, int, float]] = []
+    for start, end, w in pieces:
+        if end > start:
+            events += [(start, 1, w), (end, -1, w)]
+    events.sort(key=lambda e: e[0])
+    active: dict[float, int] = {}
+    total = 0.0
+    prev: Optional[datetime] = None
+    for at, delta, w in events:
+        if prev is not None and active:
+            total += (at - prev).total_seconds() * max(active)
+        active[w] = active.get(w, 0) + delta
+        if not active[w]:
+            del active[w]
+        prev = at
+    return total
 
 
 def _split_by_day(intervals: list[Interval]) -> dict[date, list[Interval]]:
@@ -241,6 +290,32 @@ def _root_of(task: dict, by_id: dict[str, dict]) -> dict:
         cur = by_id[parent_id]
 
 
+def _also_roots(task: dict, by_id: dict[str, dict], primary_id: str) -> list[dict]:
+    """Roots of every ``also_under`` on the task or its ancestors, minus its own.
+
+    Inherited, so a subtask of a meeting that's also metagrad is metagrad too.
+    An id that resolves to nothing (deleted from the log) is skipped rather
+    than failing the whole review. The warning is printed, but the launcher
+    sends the server's output to /dev/null, so in practice nobody sees it.
+    """
+    out: list[dict] = []
+    seen_ids = {primary_id}
+    cur: Optional[dict] = task
+    visited: set[str] = set()
+    while cur is not None and cur.get("id") not in visited:
+        visited.add(cur.get("id", ""))
+        for also_id in cur.get("also_under") or []:
+            if also_id not in by_id:
+                print(f"WARNING: {cur.get('name')!r} is also_under unknown task id {also_id}; ignored")
+                continue
+            root = _root_of(by_id[also_id], by_id)
+            if root.get("id") not in seen_ids:
+                seen_ids.add(root.get("id", ""))
+                out.append(root)
+        cur = by_id.get(cur.get("parent_task_id") or "")
+    return out
+
+
 # --------------------------------------------------------------------------- #
 # Formatting
 # --------------------------------------------------------------------------- #
@@ -255,6 +330,18 @@ def _hm(seconds: float) -> str:
 # Main entry point
 # --------------------------------------------------------------------------- #
 
+def _usage_fields(usage: Optional[dict]) -> dict:
+    """Map one day of app-sampler output onto the DayRow fields."""
+    if not usage:
+        return {}
+    return {
+        "blocked_seconds": usage.get("blocked_seconds", 0.0),
+        "blocked_spans": usage.get("spans", []),
+        "blocked_by_app": usage.get("by_app", {}),
+        "usage_note": usage.get("note", ""),
+    }
+
+
 def build_review(
     *,
     history: list[dict],
@@ -262,6 +349,8 @@ def build_review(
     dates: list[date],
     distractions_by_day: dict[str, int],
     distraction_times_by_day: Optional[dict[str, list[str]]] = None,
+    deterred_times_by_day: Optional[dict[str, list[str]]] = None,
+    usage_by_day: Optional[dict[str, dict]] = None,
     now: Optional[datetime] = None,
 ) -> Review:
     """Aggregate everything the weekly-review UI needs for ``dates``."""
@@ -302,32 +391,44 @@ def build_review(
     tag_names: dict[str, str] = {}
     tag_tasks: dict[str, list[tuple[str, float]]] = {}
     task_tag: dict[str, tuple[str, str]] = {}
+    # Tags besides the primary one, as (id, name); empty for almost every task.
+    task_also: dict[str, list[tuple[str, str]]] = {}
+    # (start, end, weight) per tag, for the split total.
+    tag_weighted: dict[str, list[tuple[datetime, datetime, float]]] = {}
 
     for t in in_range:
         root = _root_of(t, by_id)
         tid, tname = root.get("id", ""), root.get("name", "(untitled)")
         task_tag[t["id"]] = (tid, tname)
-        tag_names[tid] = tname
-        tag_intervals.setdefault(tid, []).extend(clipped[t["id"]])
-        tag_tasks.setdefault(tid, []).append(
-            (t.get("name", ""), union_seconds(clipped[t["id"]]))
-        )
+        also = [(r.get("id", ""), r.get("name", "(untitled)"))
+                for r in _also_roots(t, by_id, tid)]
+        task_also[t["id"]] = also
+        weight = 1 / (1 + len(also))
+        own = union_seconds(clipped[t["id"]])
+        for owner_id, owner_name in [(tid, tname)] + also:
+            tag_names[owner_id] = owner_name
+            tag_intervals.setdefault(owner_id, []).extend(clipped[t["id"]])
+            tag_weighted.setdefault(owner_id, []).extend(
+                (s, e, weight) for s, e in clipped[t["id"]])
+            tag_tasks.setdefault(owner_id, []).append((t.get("name", ""), own))
 
     tags: list[TagRow] = []
     for tid, ivs in tag_intervals.items():
         top = sorted(tag_tasks[tid], key=lambda x: x[1], reverse=True)[:5]
+        full = round(union_seconds(ivs), 1)
         tags.append(TagRow(
             id=tid,
             name=tag_names[tid],
-            seconds=round(union_seconds(ivs), 1),
+            seconds=full,
             task_count=len(tag_tasks[tid]),
             has_children=tid in has_children,
             top_tasks=[{"name": n, "seconds": round(s, 1)} for n, s in top if s > 0],
+            split_seconds=round(weighted_union_seconds(tag_weighted[tid]), 1),
         ))
     tags.sort(key=lambda r: r.seconds, reverse=True)
 
     tracked_seconds = union_seconds([iv for ivs in clipped.values() for iv in ivs])
-    tag_seconds_total = sum(t.seconds for t in tags)
+    tag_seconds_total = sum(t.split_seconds for t in tags)
 
     # ---- per-task rows ---------------------------------------------------- #
     day_isos = {d.isoformat() for d in dates}
@@ -370,6 +471,9 @@ def build_review(
             state=t.get("state", ""),
             is_root=t["id"] == tid,
             parent_task_id=t.get("parent_task_id"),
+            backfilled=bool(t.get("backfilled", False)),
+            also_tag_ids=[i for i, _ in task_also[t["id"]]],
+            also_tags=[n for _, n in task_also[t["id"]]],
             subtree_seconds=round(union_seconds(subtree_intervals(t["id"])), 1),
             first_start=ivs[0][0].isoformat(),
             last_end=ivs[-1][1].isoformat(),
@@ -392,10 +496,13 @@ def build_review(
             if not pieces:
                 continue
             tid, tname = task_tag[t["id"]]
+            also = task_also[t["id"]]
             for start, end in pieces:
                 dur = (end - start).total_seconds()
                 day_ivs.append((start, end))
-                by_tag[tid] = by_tag.get(tid, 0.0) + dur
+                # Split, so a day's stack of tags is still as tall as the day.
+                for owner_id, _ in [(tid, tname)] + also:
+                    by_tag[owner_id] = by_tag.get(owner_id, 0.0) + dur / (1 + len(also))
                 if dur >= MIN_BLOCK_SECONDS:
                     parts, lock = _block_provenance(
                         task=t, start=start, end=end,
@@ -422,6 +529,8 @@ def build_review(
                         resize_end_min=right[1].isoformat() if right else "",
                         editable=bool(parts),
                         lock_reason=lock,
+                        also_tag_ids=[i for i, _ in also],
+                        also_tags=[n for _, n in also],
                     ))
         blocks.sort(key=lambda b: b.start_minute)
         for b in blocks:
@@ -432,8 +541,10 @@ def build_review(
             seconds=round(union_seconds(day_ivs), 1),
             distractions=distractions_by_day.get(d.isoformat(), 0),
             distraction_times=(distraction_times_by_day or {}).get(d.isoformat(), []),
+            deterred_times=(deterred_times_by_day or {}).get(d.isoformat(), []),
             by_tag={k: round(v, 1) for k, v in by_tag.items()},
             blocks=blocks,
+            **_usage_fields((usage_by_day or {}).get(d.isoformat())),
         ))
     if day_max <= day_min:
         day_min, day_max = 8 * 60, 22 * 60
@@ -443,9 +554,10 @@ def build_review(
     # ---- overruns / wins -------------------------------------------------- #
     # Only tasks that actually finished in the range have a meaningful
     # estimate-vs-actual, and sub-15-min estimates make the ratio pure noise.
+    # Backfilled tasks are out too: their "estimate" is just their length.
     finished = [
         t for t in tasks
-        if t.completed_at[:10] in day_isos and t.estimated_seconds >= 900
+        if t.completed_at[:10] in day_isos and t.estimated_seconds >= 900 and not t.backfilled
     ]
     overruns = [
         {
@@ -538,12 +650,14 @@ def _draft_summary(r: Review) -> str:
     ]
     for tag in r.tags:
         if r.tag_seconds_total > 0:
-            share = f" ({tag.seconds / r.tag_seconds_total * 100:.0f}%)"
+            share = f" ({tag.split_seconds / r.tag_seconds_total * 100:.0f}%)"
         else:
             share = ""
         if tag.seconds < 600 and not tag.has_children:
             continue
-        lines.append(f"## {tag.name} — {_hm(tag.seconds)}{share}")
+        split = (f", {_hm(tag.split_seconds)} split with other tags"
+                 if round(tag.split_seconds / 60) != round(tag.seconds / 60) else "")
+        lines.append(f"## {tag.name} — {_hm(tag.seconds)}{split}{share}")
         for sub in tag.top_tasks:
             if sub["name"] != tag.name and sub["seconds"] >= 300:
                 lines.append(f"- {sub['name']} ({_hm(sub['seconds'])})")

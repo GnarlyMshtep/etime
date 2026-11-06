@@ -89,7 +89,7 @@ def plan(*, name: str, revision: str) -> Restore:
 
 def backup(path: Path) -> Path:
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     dest = BACKUP_DIR / f"{path.name}.{stamp}.bak"
     shutil.copy2(path, dest)
     return dest

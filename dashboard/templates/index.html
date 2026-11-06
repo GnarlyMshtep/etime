@@ -117,6 +117,10 @@
         .rv-week p { white-space: pre-wrap; font-size: 13px; line-height: 1.55; margin: 0; }
         .rv-week.empty { border-style: dashed; }
         .rv-week.empty p { color: var(--text-muted); font-style: italic; }
+        .rv-week-label { font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em;
+                         color: var(--text-muted); margin: 8px 0 3px; }
+        .rv-week-head + .rv-week-label { margin-top: 0; }
+        .rv-week p.none { color: var(--text-muted); font-style: italic; }
 
         .chart-container {
             background: var(--card-bg);
@@ -303,6 +307,12 @@
                                 box-shadow: 0 0 0 2px rgba(0,0,0,.5); }
         .rv-tl-track.drop-target { background: #eef2f7; }
         .rv-tl-tick { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--red); opacity: .55; }
+        .rv-tl-tick.deterred { background: var(--green); }
+        /* Foreground time on apps you called distracting, from the app sampler. */
+        .rv-tl-blocked { position: absolute; bottom: 0; height: 5px; background: var(--red); opacity: .8; }
+        /* Open but untouched -- a window left in front, not time spent on it. */
+        .rv-tl-blocked.idle { opacity: .28; }
+        .rv-tl-blk { color: var(--red); }
 
         .rv-two { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
         @media (max-width: 860px) { .rv-two { grid-template-columns: 1fr; }
@@ -354,12 +364,13 @@
                             font-family: inherit; font-size: 13px; cursor: pointer; }
         .rv-write { background: #FFFDF7; border: 1px solid #E8DFCC; border-radius: 12px; padding: 4px 6px 6px;
                     box-shadow: 0 1px 3px rgba(120,90,40,.06); }
-        #rvEditor {
+        #rvEditor, #rvPlanEditor {
             width: 100%; min-height: 340px; resize: vertical; border: none; outline: none; background: transparent;
             font-family: Iowan Old Style, Palatino, Georgia, serif; font-size: 16.5px; line-height: 1.75;
             color: #3b3227; padding: 18px 22px; caret-color: var(--accent);
         }
-        #rvEditor::placeholder { color: #b6ab99; font-style: italic; }
+        #rvPlanEditor { min-height: 200px; }
+        #rvEditor::placeholder, #rvPlanEditor::placeholder { color: #b6ab99; font-style: italic; }
         .rv-write-bar { display: flex; align-items: center; gap: 12px; padding: 8px 14px 6px; border-top: 1px solid #EFE7D6;
                         font-size: 12px; color: var(--text-muted); }
         .rv-write-bar .grow { flex: 1; }
@@ -426,7 +437,7 @@
     <div class="section" id="sec-day-timeline">
         <h2>Timeline</h2>
         <div class="rv-timeline" id="dayTimeline"></div>
-        <p class="cs-foot">Every recorded work interval at its real clock time, coloured by tag. Blocks under 90s are hidden (they still count in totals). Red ticks are logged distractions. Hover a block for the task.</p>
+        <p class="cs-foot">Every recorded work interval at its real clock time, coloured by tag. Blocks under 90s are hidden (they still count in totals). Red ticks are logged distractions, green ticks distractions you deterred. Hover a block for the task.</p>
     </div>
 
     <div class="section" id="sec-day-switching">
@@ -506,21 +517,36 @@
         </div>
 
         <div class="section" id="sec-weeks" style="display:none;">
-            <h2>Weekly summaries</h2>
+            <h2>Weekly plans &amp; summaries</h2>
             <div id="rvWeeks"></div>
-            <p class="cs-foot">What you wrote at the end of each week this month touches. A week that starts in the previous month or runs into the next one is still listed whole — that's the week you actually wrote about.</p>
+            <p class="cs-foot">What you planned at the start, and wrote at the end, of each week this month touches. A week that starts in the previous month or runs into the next one is still listed whole — that's the week you actually wrote about.</p>
+        </div>
+
+        <div class="section" id="sec-plan">
+            <h2>Plan for this <span class="rv-period-word">week</span></h2>
+            <div class="rv-write">
+                <textarea id="rvPlanEditor" placeholder="What's the plan for this week?"
+                          oninput="rvEditorInput('plan')" onblur="rvSaveSummary('plan')"></textarea>
+                <div class="rv-write-bar">
+                    <span id="rvPlanWords">0 words</span>
+                    <span class="grow"></span>
+                    <span id="rvPlanSaveState"></span>
+                </div>
+            </div>
+            <p class="cs-foot">Written ahead of time, to read the rest of this page against. Stored in <code>~/.etime/weekly_plans.json</code>, one entry per period, next to the summaries.</p>
         </div>
 
         <div class="section" id="sec-write">
             <h2>Your summary</h2>
             <div class="rv-write">
                 <textarea id="rvEditor" placeholder="So, what happened this week?&#10;&#10;(saves itself — ⌘S to save right now)"
-                          oninput="rvEditorInput()" onblur="rvSaveSummary()"></textarea>
+                          oninput="rvEditorInput('summary')" onblur="rvSaveSummary('summary')"></textarea>
                 <div class="rv-write-bar">
                     <span id="rvWords">0 words</span>
                     <span class="grow"></span>
                     <span id="rvSaveState"></span>
                     <button onclick="rvInsertDraft()">Insert draft ↓</button>
+                    <button id="rvPlanNextBtn" onclick="rvPlanNextWeek()">Plan next week →</button>
                 </div>
             </div>
             <p class="cs-foot">Stored in <code>~/.etime/weekly_summaries.json</code>, one entry per period — so it rides along with the hourly backup of <code>~/.etime</code>.</p>
@@ -1044,8 +1070,18 @@
                         '#C9A227','#4C6478','#B4552A','#9AA0A6'];
     let _rvData = null;
     let _rvColors = {};
-    let _rvSaveTimer = null;
     let _rvPeriodKey = '';
+    let _rvPeriodStart = '';
+
+    // Two independent writing boxes: the plan (written ahead of the period) and
+    // the summary (written looking back on it). Each keeps its own save timer, so
+    // typing in one can't cancel the other's pending save.
+    const RV_EDITORS = {
+        summary: { ta: 'rvEditor', words: 'rvWords', state: 'rvSaveState', sec: 'sec-write',
+                   api: '/api/summary', timer: null, shownKey: '' },
+        plan:    { ta: 'rvPlanEditor', words: 'rvPlanWords', state: 'rvPlanSaveState', sec: 'sec-plan',
+                   api: '/api/plan', timer: null, shownKey: '' },
+    };
 
     function esc(str) {
         return String(str == null ? '' : str)
@@ -1068,7 +1104,26 @@
         return p < 1 ? `${p.toFixed(1)}%` : `${p.toFixed(0)}%`;
     }
 
+    // A tag that shares some of its work with other tags shows its split total
+    // too: full is how long went to it, split is its share once shared time is
+    // divided among owners (what the % and the daily stacks use).
+    function rvSplitNote(tag) {
+        if (Math.round(tag.split_seconds / 60) === Math.round(tag.seconds / 60)) return '';
+        return ` <span style="opacity:.7" title="shared tasks divided evenly among the tags they count under">(${fmtH(tag.split_seconds)} split)</span>`;
+    }
+
     function rvColor(tagId) { return _rvColors[tagId] || '#9AA0A6'; }
+
+    // A block that counts under several tags (also_under) is striped in all
+    // their colors, its own tag's first.
+    function rvBlockBg(b) {
+        if (!b.also_tag_ids.length) return rvColor(b.tag_id);
+        const ids = [b.tag_id, ...b.also_tag_ids], w = 7;
+        const stops = ids.map((id, i) => `${rvColor(id)} ${i * w}px ${(i + 1) * w}px`).join(',');
+        return `repeating-linear-gradient(135deg,${stops})`;
+    }
+
+    function rvTagsOf(x) { return [x.tag_id, ...x.also_tag_ids]; }
 
     function clockLabel(minute) {
         const h = Math.floor(minute / 60) % 24;
@@ -1140,9 +1195,12 @@
         const scale = all[0].seconds || 1;
 
         const byTag = new Map();
+        // A task that also counts under other tags is listed under each of them.
         for (const t of _rvData.tasks) {
-            if (!byTag.has(t.tag_id)) byTag.set(t.tag_id, []);
-            byTag.get(t.tag_id).push(t);
+            for (const id of rvTagsOf(t)) {
+                if (!byTag.has(id)) byTag.set(id, []);
+                byTag.get(id).push(t);
+            }
         }
 
         el.innerHTML = tags.map(tag => {
@@ -1157,7 +1215,7 @@
                 ${caret}
                 <div class="nm">${esc(tag.name)}</div>
                 <div class="rv-bar-track"><div class="rv-bar-fill" style="width:${(tag.seconds / scale * 100).toFixed(1)}%;background:${rvColor(tag.id)}"></div></div>
-                <div class="val"><b>${fmtH(tag.seconds)}</b> · ${(tag.seconds / denom * 100).toFixed(0)}% · ${count}</div>
+                <div class="val"><b>${fmtH(tag.seconds)}</b>${rvSplitNote(tag)} · ${(tag.split_seconds / denom * 100).toFixed(0)}% · ${count}</div>
             </div>`;
             if (!open) return head;
 
@@ -1172,9 +1230,15 @@
                     ? `<span class="${t.overtime ? 'overtime' : t.within_ambitious ? 'within-ambitious' : ''}">${pct(t.accuracy)}</span> of ${fmtShort(t.estimated_seconds)}`
                     : 'no estimate';
                 const openBadge = t.state !== 'completed' ? ' <span class="badge badge-gray">open</span>' : '';
+                // Under its own tag, name the others it also counts for; under one
+                // of those, say where it's actually filed.
+                const others = t.tag_id === tag.id ? t.also_tags : [t.tag, ...t.also_tags.filter((_, i) => t.also_tag_ids[i] !== tag.id)];
+                const shared = others.length
+                    ? ` <span class="badge badge-gray" title="counts under each of these tags">${t.tag_id === tag.id ? '+ ' : 'also '}${esc(others.join(', '))}</span>`
+                    : '';
                 return `<div class="rv-bar-row task" title="${esc(t.name)}">
                     <span class="rv-caret placeholder"></span>
-                    <div class="nm">${t.is_root ? '' : '↳ '}${esc(t.name)}${openBadge}</div>
+                    <div class="nm">${t.is_root ? '' : '↳ '}${esc(t.name)}${openBadge}${shared}</div>
                     <div class="rv-bar-track thin"><div class="rv-bar-fill" style="width:${Math.max(0.25, t.seconds / scale * 100).toFixed(2)}%;background:${rvColor(tag.id)};opacity:.62"></div></div>
                     <div class="val"><b>${fmtH(t.seconds)}</b> <span class="share" title="share of tracked time in this range">(${rvShare(t.seconds, denom)})</span> · ${ratio} · ${when} ${t.first_start.slice(11, 16)}</div>
                 </div>`;
@@ -1212,7 +1276,7 @@
             const wd = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][new Date(y, mo - 1, dd).getDay()];
             const blocks = d.blocks.map(b => {
                 const left = pos(b.start_minute), width = Math.max(0.35, pos(b.end_minute) - left);
-                const dim = _rvOpenTags.size && !_rvOpenTags.has(b.tag_id) ? ' dim' : '';
+                const dim = _rvOpenTags.size && !rvTagsOf(b).some(id => _rvOpenTags.has(id)) ? ' dim' : '';
                 const label = width > 4 ? esc(b.name) : '';
                 const t = b.start.slice(11, 16);
                 const end = b.start.slice(0, 11) + String(Math.floor(b.end_minute / 60)).padStart(2, '0')
@@ -1225,22 +1289,51 @@
                     : `data-lock="${esc(b.lock_reason)}"`;
                 const cls = `rv-tl-block${dim} ${b.editable ? 'editable' : 'locked'}`;
                 return `<div class="${cls}" ${edit}
-                     style="left:${left.toFixed(2)}%;width:${width.toFixed(2)}%;background:${rvColor(b.tag_id)}"
-                     data-name="${esc(b.name)}" data-tag="${esc(b.tag)}"
+                     style="left:${left.toFixed(2)}%;width:${width.toFixed(2)}%;background:${rvBlockBg(b)}"
+                     data-name="${esc(b.name)}" data-tag="${esc([b.tag, ...b.also_tags].join(' + '))}"
                      data-when="${t}–${end.slice(11)}" data-dur="${fmtH(b.minutes * 60)}">${label}</div>`;
             }).join('');
-            const ticks = (d.distraction_times || []).map(t => {
+            const tickMarks = (times, cls, what) => (times || []).map(t => {
                 const m = Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5));
                 if (m < lo || m > hi) return '';
-                return `<div class="rv-tl-tick" style="left:${pos(m).toFixed(2)}%" title="distraction ${t}"></div>`;
+                return `<div class="rv-tl-tick ${cls}" style="left:${pos(m).toFixed(2)}%" title="${what} ${t}"></div>`;
+            }).join('');
+            const ticks = tickMarks(d.distraction_times, '', 'distraction')
+                        + tickMarks(d.deterred_times, 'deterred', 'deterred');
+            // A strip along the bottom of the track for time in front of a
+            // blocked app. Native title tooltip: the rich one is for editable
+            // task blocks, and this band isn't editable.
+            const band = (d.blocked_spans || []).map(s => {
+                if (s.end_minute < lo || s.start_minute > hi) return '';
+                const left = pos(s.start_minute), width = Math.max(0.3, pos(s.end_minute) - left);
+                const quiet = s.active_minutes < s.minutes * 0.25 ? ' idle' : '';
+                const sub = quiet ? ', barely touched' : '';
+                return `<div class="rv-tl-blocked${quiet}" style="left:${left.toFixed(2)}%;width:${width.toFixed(2)}%"
+                     title="${esc(s.app)} ${s.start}–${s.end} · ${fmtH(s.minutes * 60)}${sub}"></div>`;
             }).join('');
             const hrs = d.seconds > 0 ? fmtH(d.seconds) : '—';
+            const blk = d.blocked_seconds > 0
+                ? ` · <span class="rv-tl-blk" title="${esc(Object.entries(d.blocked_by_app || {})
+                      .map(([a, sec]) => a + ' ' + fmtH(sec)).join(', '))}">${fmtH(d.blocked_seconds)} off</span>`
+                : '';
             return `<div class="rv-tl-day">
-                <div class="rv-tl-label"><b>${wd} ${dd}</b> · ${hrs}</div>
-                <div class="rv-tl-track" data-lo="${lo}" data-hi="${hi}" data-date="${d.date}">${grid}${blocks}${ticks}</div>
+                <div class="rv-tl-label"><b>${wd} ${dd}</b> · ${hrs}${blk}</div>
+                <div class="rv-tl-track" data-lo="${lo}" data-hi="${hi}" data-date="${d.date}">${grid}${blocks}${ticks}${band}</div>
             </div>`;
         }).join('');
-        el.innerHTML = `<div class="rv-tl-hours">${ruler}</div>${rows}`;
+        // One line about the band: what it is, or why there isn't one. An empty
+        // band must never be read as a day with no distractions.
+        const notes = new Set(_rvData.days.map(d => d.usage_note).filter(Boolean));
+        const anyBand = _rvData.days.some(d => (d.blocked_spans || []).length);
+        let foot = '';
+        if (anyBand) {
+            foot = `<p class="cs-foot">The red strip along the bottom of each day is
+                    foreground time on the apps in <code>~/.etime/blocked_apps.json</code>.
+                    Faded means the app was in front but untouched. Hover for which app.</p>`;
+        } else if (notes.size) {
+            foot = `<p class="cs-foot">No distraction band: ${esc([...notes].join('; '))}.</p>`;
+        }
+        el.innerHTML = `<div class="rv-tl-hours">${ruler}</div>${rows}${foot}`;
     }
 
     // ----------------------------------------------------------------- //
@@ -1533,41 +1626,62 @@
         });
     }
 
-    // ---- my own weekly summary (persisted) ---- //
-    function rvSetSaveState(text, color) {
-        const el = document.getElementById('rvSaveState');
+    // ---- my own weekly plan and summary (persisted) ---- //
+    function rvSetSaveState(kind, text, color) {
+        const el = document.getElementById(RV_EDITORS[kind].state);
         if (el) { el.textContent = text; el.style.color = color || 'var(--text-muted)'; }
     }
 
-    function rvWordCount() {
-        const ta = document.getElementById('rvEditor');
+    function rvWordCount(kind) {
+        const ed = RV_EDITORS[kind];
+        const ta = document.getElementById(ed.ta);
         const words = ta.value.trim() ? ta.value.trim().split(/\s+/).length : 0;
-        document.getElementById('rvWords').textContent = `${words} word${words === 1 ? '' : 's'}`;
+        document.getElementById(ed.words).textContent = `${words} word${words === 1 ? '' : 's'}`;
     }
 
-    async function rvSaveSummary() {
-        const ta = document.getElementById('rvEditor');
-        rvSetSaveState('saving…');
+    // `key` and `text` default to what's on screen now. The debounced save passes
+    // the ones captured when it was scheduled instead, so a save that fires after
+    // navigating to another week can't write this week's text under that one.
+    async function rvSaveSummary(kind, key = _rvPeriodKey, text = null) {
+        const ed = RV_EDITORS[kind];
+        clearTimeout(ed.timer);
+        const ta = document.getElementById(ed.ta);
+        if (text === null) text = ta.value;
+        rvSetSaveState(kind, 'saving…');
         try {
-            const res = await fetch('/api/summary', {
+            const res = await fetch(ed.api, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ key: _rvPeriodKey, text: ta.value }),
+                body: JSON.stringify({ key, text }),
             });
             const d = await res.json();
-            rvSetSaveState(d.updated_at ? `saved ${d.updated_at.slice(11, 16)}` : 'saved', 'var(--green)');
+            if (!res.ok) throw new Error(d.error || res.status);
+            if (key !== _rvPeriodKey) return;  // saved an older period; this box shows another now
+            rvSetSaveState(kind, d.updated_at ? `saved ${d.updated_at.slice(11, 16)}` : 'saved', 'var(--green)');
             const banner = document.getElementById('rvBanner');
-            if (banner && ta.value.trim()) banner.style.display = 'none';
+            if (kind === 'summary' && banner && text.trim()) banner.style.display = 'none';
         } catch (e) {
-            rvSetSaveState('save failed — retry', 'var(--red)');
+            rvSetSaveState(kind, 'save failed — retry', 'var(--red)');
         }
     }
 
-    function rvEditorInput() {
-        rvWordCount();
-        rvSetSaveState('unsaved…');
-        clearTimeout(_rvSaveTimer);
-        _rvSaveTimer = setTimeout(rvSaveSummary, 1200);
+    function rvEditorInput(kind) {
+        const ed = RV_EDITORS[kind];
+        rvWordCount(kind);
+        rvSetSaveState(kind, 'unsaved…');
+        clearTimeout(ed.timer);
+        const key = _rvPeriodKey;
+        const text = document.getElementById(ed.ta).value;
+        ed.timer = setTimeout(() => rvSaveSummary(kind, key, text), 1200);
+    }
+
+    // Sunday flow: having written this week's summary, go write next week's plan.
+    async function rvPlanNextWeek() {
+        const [y, m, d] = _rvPeriodStart.split('-').map(Number);
+        const next = new Date(y, m - 1, d + 7);
+        const iso = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}-${String(next.getDate()).padStart(2, '0')}`;
+        await rvOpenWeek(iso);
+        rvFocusEditor('plan');
     }
 
     function rvInsertDraft() {
@@ -1575,17 +1689,25 @@
         const draft = _rvData.summary_text;
         ta.value = ta.value.trim() ? ta.value.replace(/\s*$/, '\n\n') + draft : draft;
         ta.focus();
-        rvEditorInput();
+        rvEditorInput('summary');
     }
 
     function renderRvMine(data) {
+        for (const kind of ['summary', 'plan']) {
+            const mine = data[kind] || { text: '', updated_at: '' };
+            const ed = RV_EDITORS[kind];
+            const ta = document.getElementById(ed.ta);
+            // Don't clobber in-flight typing on the 60s auto-refresh — but a box
+            // that's moved to another period must always show that period's text.
+            if (document.activeElement !== ta || ed.shownKey !== _rvPeriodKey) ta.value = mine.text || '';
+            ed.shownKey = _rvPeriodKey;
+            rvWordCount(kind);
+            rvSetSaveState(kind,
+                           mine.updated_at ? `saved ${mine.updated_at.slice(0, 16).replace('T', ' ')}` : 'not written yet',
+                           mine.updated_at ? 'var(--text-muted)' : 'var(--accent)');
+        }
+        document.getElementById('rvPlanNextBtn').style.display = data.period === 'week' ? '' : 'none';
         const mine = data.summary || { text: '', updated_at: '' };
-        const ta = document.getElementById('rvEditor');
-        // Don't clobber in-flight typing on the 60s auto-refresh.
-        if (document.activeElement !== ta) ta.value = mine.text || '';
-        rvWordCount();
-        rvSetSaveState(mine.updated_at ? `saved ${mine.updated_at.slice(0, 16).replace('T', ' ')}` : 'not written yet',
-                       mine.updated_at ? 'var(--text-muted)' : 'var(--accent)');
         const banner = document.getElementById('rvBanner');
         banner.style.display = (!(mine.text || '').trim() && data.period === 'week') ? '' : 'none';
     }
@@ -1614,20 +1736,30 @@
         sec.style.display = '';
 
         const written = weeks.filter(w => (w.text || '').trim()).length;
+        const planned = weeks.filter(w => (w.plan || '').trim()).length;
         document.getElementById('rvWeeks').innerHTML = weeks.map(w => {
             const has = (w.text || '').trim();
+            const hasPlan = (w.plan || '').trim();
             const when = w.updated_at
                 ? `written ${w.updated_at.slice(0, 16).replace('T', ' ')}` : '';
-            return `<div class="rv-week${has ? '' : ' empty'}">
+            // Weeks with neither keep the old single-line "nothing written" look;
+            // otherwise each part is labelled, and a missing one says so.
+            const body = !has && !hasPlan
+                ? `<p>Nothing written for this week.</p>`
+                : `<div class="rv-week-label">Plan</div>
+                   <p class="${hasPlan ? '' : 'none'}">${hasPlan ? esc(w.plan) : 'No plan written.'}</p>
+                   <div class="rv-week-label">Summary</div>
+                   <p class="${has ? '' : 'none'}">${has ? esc(w.text) : 'No summary written.'}</p>`;
+            return `<div class="rv-week${has || hasPlan ? '' : ' empty'}">
                 <div class="rv-week-head">
                     <b>${esc(rvWeekLabel(w.start, w.end))}</b>
                     <span class="when">${esc(when)}</span>
                     <span class="grow"></span>
                     <button onclick="rvOpenWeek('${w.start}')">open this week →</button>
                 </div>
-                <p>${has ? esc(w.text) : 'Nothing written for this week.'}</p>
+                ${body}
             </div>`;
-        }).join('') + `<p class="cs-foot" style="margin-top:10px">${written} of ${weeks.length} weeks written.</p>`;
+        }).join('') + `<p class="cs-foot" style="margin-top:10px">${planned} of ${weeks.length} weeks planned, ${written} of ${weeks.length} written up.</p>`;
     }
 
     // Jump from a week card into that week's own review.
@@ -1636,8 +1768,8 @@
         document.querySelectorAll('#periodToggle button').forEach(
             b => b.classList.toggle('active', b.dataset.period === 'week'));
         datePicker.value = startIso;
-        fetchAndRender(startIso);
         window.scrollTo({ top: 0, behavior: 'smooth' });
+        return fetchAndRender(startIso);
     }
 
     function renderReview(data) {
@@ -1649,7 +1781,10 @@
         // reach it — it's what makes an empty month editor still say "week".
         document.getElementById('rvEditor').placeholder =
             `So, what happened this ${periodWord}?\n\n(saves itself — ⌘S to save right now)`;
+        document.getElementById('rvPlanEditor').placeholder =
+            `What's the plan for this ${periodWord}? Priorities, what "done" looks like by the end of it…\n\n(saves itself — ⌘S to save right now)`;
         _rvPeriodKey = `${data.period}-${data.start}`;
+        _rvPeriodStart = data.start;
         _rvColors = {};
         _rvData.tags.forEach((t, i) => { _rvColors[t.id] = RV_PALETTE[i % RV_PALETTE.length]; });
         for (const id of [..._rvOpenTags]) {
@@ -1752,20 +1887,21 @@
         setTimeout(() => { btn.textContent = 'Copy'; }, 1800);
     });
 
-    function rvFocusEditor() {
-        const ta = document.getElementById('rvEditor');
-        document.getElementById('rvWriteSection').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    function rvFocusEditor(kind = 'summary') {
+        const ed = RV_EDITORS[kind];
+        const ta = document.getElementById(ed.ta);
+        document.getElementById(ed.sec).scrollIntoView({ behavior: 'smooth', block: 'center' });
         setTimeout(() => ta.focus(), 350);
     }
 
-    // ⌘S / Ctrl+S saves the summary immediately instead of the browser's save dialog.
+    // ⌘S / Ctrl+S saves the focused plan/summary immediately instead of the
+    // browser's save dialog (the summary, if neither box has focus).
     document.addEventListener('keydown', (e) => {
         if ((e.metaKey || e.ctrlKey) && e.key === 's') {
-            const ta = document.getElementById('rvEditor');
-            if (ta && document.getElementById('rangeView').style.display !== 'none') {
+            if (document.getElementById('rangeView').style.display !== 'none') {
                 e.preventDefault();
-                clearTimeout(_rvSaveTimer);
-                rvSaveSummary();
+                const planFocused = document.activeElement === document.getElementById('rvPlanEditor');
+                rvSaveSummary(planFocused ? 'plan' : 'summary');
             }
         }
     });
@@ -1937,7 +2073,7 @@
         fetchAndRender(datePicker.value);
     });
 
-    // Initial load — ?period=week and #summary let the Sunday reminder deep-link here.
+    // Initial load — ?period=week and #summary / #plan let the Sunday reminder deep-link here.
     const _params = new URLSearchParams(location.search);
     const _wantPeriod = _params.get('period');
     if (_wantPeriod === 'week' || _wantPeriod === 'month') {
@@ -1946,7 +2082,8 @@
             b => b.classList.toggle('active', b.dataset.period === _wantPeriod));
     }
     fetchAndRender(datePicker.value).then(() => {
-        if (location.hash === '#summary') rvFocusEditor();
+        if (location.hash === '#summary') rvFocusEditor('summary');
+        if (location.hash === '#plan') rvFocusEditor('plan');
     });
 
     // Auto-refresh every 60s (use current picker value)

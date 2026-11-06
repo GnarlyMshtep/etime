@@ -49,7 +49,7 @@ def category_insert_index(tasks: list[Task]) -> int:
 
 def backup() -> Path:
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     dest = BACKUP_DIR / f"active.json.{stamp}.bak"
     shutil.copy2(ACTIVE_FILE, dest)
     return dest
