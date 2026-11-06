@@ -121,6 +121,7 @@ class DayRow:
     # sampler. Empty when it isn't running -- `usage_note` says which, so an
     # empty band is never read as a clean day.
     blocked_seconds: float = 0.0
+    blocked_visits: int = 0
     blocked_spans: list[dict] = field(default_factory=list)
     blocked_by_app: dict[str, float] = field(default_factory=dict)
     usage_note: str = ""
@@ -336,6 +337,7 @@ def _usage_fields(usage: Optional[dict]) -> dict:
         return {}
     return {
         "blocked_seconds": usage.get("blocked_seconds", 0.0),
+        "blocked_visits": usage.get("visits", 0),
         "blocked_spans": usage.get("spans", []),
         "blocked_by_app": usage.get("by_app", {}),
         "usage_note": usage.get("note", ""),
@@ -536,6 +538,12 @@ def build_review(
         for b in blocks:
             day_min = min(day_min, b.start_minute)
             day_max = max(day_max, b.end_minute)
+        # The band widens the window too. Distraction before the first task or
+        # after the last is counted in the day's total, so it has to be drawable
+        # as well -- otherwise the strip silently disagrees with the label.
+        for span in (usage_by_day or {}).get(d.isoformat(), {}).get("spans", []):
+            day_min = min(day_min, span["start_minute"])
+            day_max = max(day_max, span["end_minute"])
         day_rows.append(DayRow(
             date=d.isoformat(),
             seconds=round(union_seconds(day_ivs), 1),

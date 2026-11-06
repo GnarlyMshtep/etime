@@ -127,6 +127,15 @@ def append_run(*, run: AppRun, path: Path = APP_USAGE_FILE) -> None:
         os.fsync(fh.fileno())
 
 
+# Set by SIGTERM so the open run is written before exit, rather than lost.
+_stopping = False
+
+
+def _handle_sigterm(signum: int, frame: object) -> None:
+    global _stopping
+    _stopping = True
+
+
 def sample_loop(*, once: bool = False, verbose: bool = False,
                 out_path: Optional[Path] = None) -> None:
     open_run: Optional[OpenRun] = None
@@ -148,6 +157,16 @@ def sample_loop(*, once: bool = False, verbose: bool = False,
         open_run = None
 
     while True:
+        if _stopping:
+            flush("terminated")
+            return
+        # Re-read each time round: deleting the list is how you turn this off,
+        # and it has to take effect without waiting for an etime restart.
+        if not is_enabled():
+            flush("disabled")
+            if verbose:
+                print(f"{BLOCKED_APPS_FILE} is gone -- sampling off", flush=True)
+            return
         now = read_sample()
         gap = (now.at - previous.at) if previous else timedelta(0)
         if previous is not None and gap > max_gap:
@@ -272,6 +291,7 @@ def main() -> None:
               f"idle {s.idle_seconds:.1f}s  locked={s.locked}")
         return
     APP_SAMPLER_PID_FILE.write_text(str(os.getpid()))
+    signal.signal(signal.SIGTERM, _handle_sigterm)
     try:
         sample_loop(verbose=args.verbose)
     except KeyboardInterrupt:

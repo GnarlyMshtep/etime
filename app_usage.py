@@ -111,6 +111,7 @@ class DayUsage:
     blocked_seconds: float
     blocked_active_seconds: float
     by_app: dict[str, float]        # app name -> seconds, blocked apps only
+    visits: int                     # separate sittings, however short
     sampled: bool                   # False when the sampler wasn't running
     note: str = ""                  # why the band is empty, when it is
 
@@ -120,6 +121,7 @@ class DayUsage:
             "sampled": self.sampled,
             "blocked_seconds": round(self.blocked_seconds, 1),
             "blocked_active_seconds": round(self.blocked_active_seconds, 1),
+            "visits": self.visits,
             "by_app": {k: round(v, 1) for k, v in self.by_app.items()},
             "note": self.note,
             "spans": [
@@ -156,6 +158,12 @@ def blocked_usage_by_day(*, dates: list[date], path: Path = APP_USAGE_FILE,
         day_runs = [r for r in runs if r.start_dt.date() == d]
         # Any sample at all that day, blocked or not, means we were watching.
         sampled = bool(day_runs)
+        # Counted over *all* the day's runs, so a sitting broken into segments
+        # counts once and leaving the app and coming back counts twice. Before
+        # the length filter: a 6-second check of Slack is exactly the kind of
+        # visit worth counting and the wrong thing to draw.
+        visits = sum(1 for s in coalesce(runs=day_runs)
+                     if block_list.blocks(bundle_id=s.bundle_id))
         spans = [s for s in coalesce(runs=[r for r in day_runs
                                            if block_list.blocks(bundle_id=r.bundle_id)])
                  if s.seconds >= MIN_SPAN_SECONDS]
@@ -168,8 +176,10 @@ def blocked_usage_by_day(*, dates: list[date], path: Path = APP_USAGE_FILE,
             blocked_seconds=sum(s.seconds for s in spans),
             blocked_active_seconds=sum(s.active_seconds for s in spans),
             by_app=dict(sorted(by_app.items(), key=lambda kv: -kv[1])),
+            visits=visits,
             sampled=sampled,
-            note=(block_list.error if block_list.error else
+            note=("" if block_list.missing else
+                  block_list.error if block_list.error else
                   "" if sampled else "app sampler wasn't running"),
         )
     return out

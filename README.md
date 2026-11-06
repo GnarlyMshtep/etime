@@ -376,7 +376,9 @@ why the `websites` list above is recorded for later and not yet drawn.
 
 On the timeline, a faded strip means the app was in front but untouched: a window
 left open, not time spent. Hover a strip for the app and duration; a day's label
-gains, say, `· 24m off`.
+gains, say, `· 24m off · 7×`. The count is separate sittings, and includes the
+six-second checks that are too short to draw -- how often you went looking is a
+different number from how long you stayed, and usually the more interesting one.
 
 ### Raycast Focus (optional, one-time import)
 

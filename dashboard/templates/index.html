@@ -1314,7 +1314,8 @@
             const hrs = d.seconds > 0 ? fmtH(d.seconds) : '—';
             const blk = d.blocked_seconds > 0
                 ? ` · <span class="rv-tl-blk" title="${esc(Object.entries(d.blocked_by_app || {})
-                      .map(([a, sec]) => a + ' ' + fmtH(sec)).join(', '))}">${fmtH(d.blocked_seconds)} off</span>`
+                      .map(([a, sec]) => a + ' ' + fmtH(sec)).join(', '))}">${fmtH(d.blocked_seconds)} off${
+                      d.blocked_visits ? ` · ${d.blocked_visits}×` : ''}</span>`
                 : '';
             return `<div class="rv-tl-day">
                 <div class="rv-tl-label"><b>${wd} ${dd}</b> · ${hrs}${blk}</div>

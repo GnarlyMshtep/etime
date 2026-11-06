@@ -64,7 +64,8 @@ class BlockList:
     imported_from: str = ""        # provenance, shown in the dashboard footnote
     imported_at: str = ""
     source: Optional[Path] = None
-    error: str = ""                # why it's empty, when it is
+    missing: bool = False          # no list written: the feature is simply off
+    error: str = ""                # opted in but unreadable -- worth saying out loud
 
     def blocks(self, *, bundle_id: str) -> bool:
         return bundle_id in self.apps
@@ -90,8 +91,9 @@ def load_block_list(*, path: Path = BLOCKED_APPS_FILE) -> BlockList:
     mistaken for a clean day.
     """
     if not path.exists():
-        return BlockList(error=f"no {path.name} -- "
-                               f"run scripts/import_raycast_blocklist.py or write it by hand")
+        # Not opted in. Silent on purpose: most installs never will be, and a
+        # footnote pitching an importer would follow them around the dashboard.
+        return BlockList(missing=True)
     try:
         with open(path, "r") as fh:
             raw = json.load(fh)
