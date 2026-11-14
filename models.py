@@ -63,13 +63,29 @@ class Task:
         return d
 
     def start_interval(self) -> None:
-        """Record the start of a new work interval (task started/resumed)."""
+        """Record the start of a new work interval (task started/resumed).
+
+        A task that is already running keeps the interval it has. Starting one
+        twice used to append a second open interval, and since compute_elapsed
+        treats every open interval as ending *now*, the task then counted at
+        double speed -- and the extra interval was never closed again, because
+        end_interval only ever looked at the last one.
+        """
+        if any(iv.get("end") is None for iv in self.work_intervals):
+            return
         self.work_intervals.append({"start": datetime.now().isoformat(), "end": None})
 
     def end_interval(self) -> None:
-        """Close the current open work interval (task paused/completed)."""
-        if self.work_intervals and self.work_intervals[-1]["end"] is None:
-            self.work_intervals[-1]["end"] = datetime.now().isoformat()
+        """Close every open work interval (task paused/completed).
+
+        Every one, not just the last: a task already carrying a stale open
+        interval heals the next time it is paused, instead of counting double
+        for as long as it exists.
+        """
+        now = datetime.now().isoformat()
+        for iv in self.work_intervals:
+            if iv.get("end") is None:
+                iv["end"] = now
 
     @staticmethod
     def _interval_end(iv: dict, now: datetime) -> datetime:
