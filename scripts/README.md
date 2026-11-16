@@ -27,7 +27,7 @@ Pass `--apply` to write.
 
 | | |
 |---|---|
-| `log_past_block.py` | Add a task for a stretch of past work, under an existing parent. Repeat `--when` for one task spread over several stretches. `--state paused` (default) leaves it for you to finish; `--state completed` files it straight to history. `--also-under` (repeatable) makes it count under further categories too. |
+| `log_past_block.py` | Add a task for a stretch of past work, under an existing parent. Repeat `--when` for one task spread over several stretches. `--state paused` (default) leaves it for you to finish; `--state completed` files it straight to history. `--also-under` (repeatable) makes it count under further categories too. `--under-id`/`--also-under-id` take an id instead of a name, which is the only way to reach a parent or tag that has itself been completed. |
 | `set_task_time.py` | Give a task that's *already open* the time it actually took, and optionally `--close` it. `--when` replaces the recorded time; `--resume-after MIN` instead *appends* one interval, from MIN minutes past the last recorded end up to now, for work that carried on after you forgot to hit resume. Refuses to close a task with subtasks. |
 | `add_category.py` | Create a category tag — a root estimated at one minute — placed in the category cluster at the top of the list. |
 | `rename_task.py` | Rename an open task, usually a category. Subtasks and history point at it by id, so they follow the rename. |
@@ -51,6 +51,10 @@ yesterday 2-3     also: today, 9/26, 2026-09-26
 ```bash
 # a meeting you didn't time
 python3 scripts/log_past_block.py --name "1:1 with wen" --under meetings --when "yesterday 2:30-4"
+
+# under a parent that's already completed -- by id, since names only match open tasks
+python3 scripts/log_past_block.py --name "follow-up talk" --under-id <task-id> \
+    --when "11/13 5-6:30pm" --state completed
 
 # a task you'd started but never timed, now finished
 python3 scripts/set_task_time.py --task "general trends" --when "yesterday 9 to 10pm" --close

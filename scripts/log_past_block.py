@@ -13,6 +13,14 @@ the same way in both places. ``--when`` can be repeated for one task that ran
 over several separate stretches -- a three-day conference is one task, not three.
 ``--also-under`` (repeatable) makes it count under further categories too: a
 metagrad meeting filed under meetings, ``--also-under metagrad``.
+
+Names are matched among the *open* tasks, which can't reach a parent that has
+itself been completed -- a category since retired, or a finished piece of work
+whose follow-ups keep arriving. ``--under-id`` and
+``--also-under-id`` take a task id instead and look in history too; the
+dashboard resolves ids against both files, so the time still lands in the right
+bucket. A completed parent can only take a completed block (the overlay tree is
+built from active.json alone).
 """
 
 from __future__ import annotations
@@ -62,6 +70,22 @@ def find_parent(tasks: list[Task], *, name: str) -> Task:
     if len(matches) > 1:
         sys.exit(f"{len(matches)} tasks match {name!r}: " + ", ".join(t.name for t in matches))
     return matches[0]
+
+
+def history_rows() -> list[dict]:
+    return [json.loads(l) for l in HISTORY_FILE.read_text().splitlines() if l.strip()]
+
+
+def find_by_id(*, task_id: str, tasks: list[Task]) -> tuple[Task, bool]:
+    """The task with this id, and whether it's still open. History is searched too."""
+    for t in tasks:
+        if t.id == task_id:
+            return t, True
+    for row in history_rows():
+        if row.get("id") == task_id:
+            # from_dict mutates what it's handed, so give it a copy.
+            return Task.from_dict(dict(row)), False
+    sys.exit(f"no task with id {task_id} in either {ACTIVE_FILE.name} or {HISTORY_FILE.name}")
 
 
 def subtree_end(tasks: list[Task], *, root: Task) -> int:
@@ -129,13 +153,18 @@ def backup(path: Path) -> Path:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--name", required=True, help="name for the new task")
-    ap.add_argument("--under", "--category", dest="under", required=True,
-                    help="existing task to file it under")
+    under = ap.add_mutually_exclusive_group(required=True)
+    under.add_argument("--under", "--category", dest="under",
+                       help="existing open task to file it under, by name")
+    under.add_argument("--under-id", dest="under_id",
+                       help="same, by id -- the only way to reach a completed parent")
     ap.add_argument("--when", required=True, action="append",
                     help='e.g. "yesterday 4 to 5:30", "2:30-4", "9/26 9-10:30". '
                          'Repeat for a task that ran over several stretches.')
     ap.add_argument("--also-under", action="append", default=[],
                     help="a further category it counts under; repeatable")
+    ap.add_argument("--also-under-id", dest="also_under_id", action="append", default=[],
+                    help="same, by id, so a retired category still works; repeatable")
     ap.add_argument("--state", choices=("paused", "completed"), default="paused")
     ap.add_argument("--minutes", type=int, default=None,
                     help="estimate in minutes (default: the length of the block)")
@@ -158,16 +187,26 @@ def main() -> None:
                      f"and {b.start:%a %m-%d %H:%M}-{b.end:%H:%M}")
 
     tasks = load_active_tasks()
-    parent = find_parent(tasks, name=args.under)
+    if args.under_id:
+        parent, parent_open = find_by_id(task_id=args.under_id, tasks=tasks)
+    else:
+        parent, parent_open = find_parent(tasks, name=args.under), True
     also = [find_parent(tasks, name=n) for n in args.also_under]
+    also += [find_by_id(task_id=i, tasks=tasks)[0] for i in args.also_under_id]
     if parent.id in {t.id for t in also}:
         sys.exit(f"--also-under {parent.name!r} is already its parent")
     completed = args.state == "completed"
+    if not parent_open and not completed:
+        sys.exit(f"{parent.name!r} is completed, and a paused block filed under it would "
+                 f"never show up: the overlay builds its tree from {ACTIVE_FILE.name} alone, "
+                 f"where the parent no longer is. Pass --state completed, or file it under "
+                 f"an open task.")
     task = build_task(name=args.name, blocks=blocks, parent=parent,
                       completed=completed, minutes=args.minutes, also_under=also)
 
     also_str = f", also under {', '.join(repr(t.name) for t in also)}" if also else ""
-    print(f"{task.name!r} under {parent.name!r}{also_str}, as {task.state.value}")
+    print(f"{task.name!r} under {parent.name!r}"
+          f"{'' if parent_open else ' (completed)'}{also_str}, as {task.state.value}")
     any_clash = False
     for block in blocks:
         print(f"  {block.start:%a %Y-%m-%d %H:%M} - {block.end:%H:%M}  ({block.minutes} min)")
