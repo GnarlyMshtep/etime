@@ -2000,10 +2000,18 @@
         rvApplySectionState();
     }
 
-    async function fetchAndRenderDay(selectedDate) {
+    // Renders are serialised by sequence number: whichever fetch started last
+    // wins, no matter what order the responses come back in. Holding an arrow
+    // key down fires faster than a month range takes to return, and a day fetch
+    // beats a month one, so without this the page settles on whatever arrived
+    // last rather than on the date showing in the picker.
+    let _fetchSeq = 0;
+
+    async function fetchAndRenderDay(selectedDate, seq) {
         const url = selectedDate ? `/api/data?date=${selectedDate}` : '/api/data';
         const res = await fetch(url);
         const data = await res.json();
+        if (seq !== _fetchSeq) return;
 
         document.title = `etime dashboard — ${data.date}`;
         if (datePicker.value !== data.date) datePicker.value = data.date;
@@ -2014,6 +2022,7 @@
         _rvIds = { controls: 'dayControls', bars: 'dayBreakdown', timeline: 'dayTimeline' };
         const rangeRes = await fetch(`/api/range?period=day&date=${data.date}`);
         const rangeData = await rangeRes.json();
+        if (seq !== _fetchSeq) return;
         renderReview(rangeData);
         renderStats(data.stats, rangeData.review);
 
@@ -2034,17 +2043,20 @@
     }
 
     async function fetchAndRender(selectedDate = null) {
+        const seq = ++_fetchSeq;
         try {
             const isDay = currentPeriod === 'day';
             document.getElementById('dayView').style.display = isDay ? '' : 'none';
             document.getElementById('rangeView').style.display = isDay ? 'none' : '';
             if (isDay) {
-                await fetchAndRenderDay(selectedDate);
+                await fetchAndRenderDay(selectedDate, seq);
             } else {
                 _rvIds = { controls: 'rvControls', bars: 'rvBreakdown', timeline: 'rvTimeline' };
                 const q = selectedDate ? `&date=${selectedDate}` : '';
                 const res = await fetch(`/api/range?period=${currentPeriod}${q}`);
-                renderRange(await res.json());
+                const data = await res.json();
+                if (seq !== _fetchSeq) return;
+                renderRange(data);
             }
         } catch (err) {
             console.error('Failed to fetch dashboard data:', err);
