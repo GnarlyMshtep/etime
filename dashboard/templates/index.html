@@ -170,6 +170,21 @@
             color: #fff;
             border-color: var(--accent);
         }
+        .period-hint {
+            text-align: center;
+            margin-top: 6px;
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+        .period-hint kbd {
+            font-family: inherit;
+            font-size: 10px;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 1px 5px;
+            margin: 0 1px;
+            background: var(--card-bg);
+        }
         .cs-foot {
             font-size: 11px;
             color: var(--text-muted);
@@ -417,6 +432,10 @@
         <button data-period="day" class="active">Day</button>
         <button data-period="week">Week</button>
         <button data-period="month">Month</button>
+    </div>
+    <div class="period-hint">
+        <kbd>D</kbd><kbd>W</kbd><kbd>M</kbd> switch scope &middot;
+        <kbd>&larr;</kbd><kbd>&rarr;</kbd> step through it
     </div>
 
     <div id="dayView">
@@ -2032,22 +2051,66 @@
         }
     }
 
-    // Period toggle (Day / Week / Month)
+    // Period toggle (Day / Week / Month), by click or by key.
+    const PERIODS = ['day', 'week', 'month'];
+
+    function setPeriod(period, { refetch = true } = {}) {
+        if (!PERIODS.includes(period)) return;
+        currentPeriod = period;
+        document.querySelectorAll('#periodToggle button').forEach(
+            b => b.classList.toggle('active', b.dataset.period === period));
+        if (refetch) fetchAndRender(datePicker.value);
+    }
+
     document.getElementById('periodToggle').addEventListener('click', (e) => {
         const btn = e.target.closest('button');
-        if (!btn) return;
-        currentPeriod = btn.dataset.period;
-        document.querySelectorAll('#periodToggle button').forEach(b => b.classList.toggle('active', b === btn));
-        fetchAndRender(datePicker.value);
+        if (btn) setPeriod(btn.dataset.period);
+    });
+
+    // Move the anchor date by one unit of whatever scope is showing. The date is
+    // rebuilt field by field rather than parsed from the ISO string, which
+    // Date() reads as UTC and so lands on the day before west of Greenwich. A
+    // month step holds the day of the month, clamped to the last day of a
+    // shorter one, so stepping on the 31st doesn't skip February.
+    function stepDate(dir) {
+        const [y, m, d] = (datePicker.value || '').split('-').map(Number);
+        if (!y || !m || !d) return;
+        let next;
+        if (currentPeriod === 'month') {
+            const target = new Date(y, m - 1 + dir, 1);
+            const lastDay = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate();
+            next = new Date(target.getFullYear(), target.getMonth(), Math.min(d, lastDay));
+        } else {
+            next = new Date(y, m - 1, d + dir * (currentPeriod === 'week' ? 7 : 1));
+        }
+        const pad = (n) => String(n).padStart(2, '0');
+        const iso = `${next.getFullYear()}-${pad(next.getMonth() + 1)}-${pad(next.getDate())}`;
+        datePicker.value = iso;
+        fetchAndRender(iso);
+    }
+
+    // D / W / M pick the scope, the arrows walk through it. Anything typed into
+    // the date field or either writing box is typing, not navigating -- and a
+    // modifier means the browser's own shortcut, including the Cmd-S above.
+    document.addEventListener('keydown', (e) => {
+        if (e.metaKey || e.ctrlKey || e.altKey) return;
+        const el = e.target;
+        if (el && (el.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName))) return;
+        const scope = { d: 'day', w: 'week', m: 'month' }[e.key.toLowerCase()];
+        if (scope) {
+            e.preventDefault();
+            setPeriod(scope);
+        } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+            e.preventDefault();
+            stepDate(e.key === 'ArrowRight' ? 1 : -1);
+        }
     });
 
     // Initial load — ?period=week and #summary / #plan let the Sunday reminder deep-link here.
     const _params = new URLSearchParams(location.search);
     const _wantPeriod = _params.get('period');
     if (_wantPeriod === 'week' || _wantPeriod === 'month') {
-        currentPeriod = _wantPeriod;
-        document.querySelectorAll('#periodToggle button').forEach(
-            b => b.classList.toggle('active', b.dataset.period === _wantPeriod));
+        setPeriod(_wantPeriod, { refetch: false });
     }
     fetchAndRender(datePicker.value).then(() => {
         if (location.hash === '#summary') rvFocusEditor('summary');
